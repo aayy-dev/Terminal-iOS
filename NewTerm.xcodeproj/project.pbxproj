@@ -958,7 +958,7 @@
 					Common/External,
 					Common/External/ncurses,
 				);
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				"IPHONEOS_DEPLOYMENT_TARGET[sdk=macosx*]" = 14.2;
 				LIBRARY_SEARCH_PATHS = Common/External;
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
@@ -1002,7 +1002,7 @@
 					Common/External,
 					Common/External/ncurses,
 				);
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				"IPHONEOS_DEPLOYMENT_TARGET[sdk=macosx*]" = 14.2;
 				LIBRARY_SEARCH_PATHS = Common/External;
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
@@ -1374,7 +1374,7 @@
 			repositoryURL = "https://github.com/SwiftUIX/SwiftUIX";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.1.2;
+				minimumVersion = 0.3.2;
 			};
 		};
 		4E9FB96A26171A01005AFCC8 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
