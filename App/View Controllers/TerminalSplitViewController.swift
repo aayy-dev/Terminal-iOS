@@ -127,13 +127,20 @@ class TerminalSplitViewController: BaseTerminalSplitViewControllerChild {
 			let containerView = UIView()
 			containerView.translatesAutoresizingMaskIntoConstraints = false
 
-			addChild(viewController)
+			// Adding a child we already have makes UIKit remove it from us first, and a session stops
+			// its process when it’s removed. So only add the new ones.
+			let isNewChild = viewController.parent !== self
+			if isNewChild {
+				addChild(viewController)
+			}
 			viewController.delegate = self
 			viewController.view.frame = containerView.bounds
 			viewController.view.autoresizingMask = [ .flexibleWidth, .flexibleHeight ]
 			containerView.addSubview(viewController.view)
 			stackView.addArrangedSubview(containerView)
-			viewController.didMove(toParent: self)
+			if isNewChild {
+				viewController.didMove(toParent: self)
+			}
 
 			if i != viewControllers.count - 1 {
 				let splitGrabberView = SplitGrabberView(axis: axis)
@@ -190,6 +197,17 @@ class TerminalSplitViewController: BaseTerminalSplitViewControllerChild {
 
 		viewControllers.remove(at: index)
 
+		// Keep the same pane selected, or if it was this one, the pane now in its place.
+		if index < selectedIndex || selectedIndex >= viewControllers.count {
+			selectedIndex = max(selectedIndex - 1, 0)
+		}
+
+		// Let go of it too, or it stays our child, with its terminal and scrollback, until the tab
+		// closes.
+		viewController.willMove(toParent: nil)
+		viewController.view.removeFromSuperview()
+		viewController.removeFromParent()
+
 		if viewControllers.isEmpty {
 			// All view controllers in the split have been removed, so remove ourselves.
 			if let parentSplitView = parent as? TerminalSplitViewController {
@@ -199,6 +217,19 @@ class TerminalSplitViewController: BaseTerminalSplitViewControllerChild {
 			}
 		}
 		updateViewControllers()
+	}
+
+	/// Ends the session in every pane, for when the tab closes. A split can’t do this when it’s
+	/// removed from its parent, because it’s also removed from its parent when it goes into a new
+	/// split.
+	func endSessions() {
+		for viewController in viewControllers {
+			(viewController as? TerminalSplitViewController)?.endSessions()
+
+			// A session stops its process when it’s removed from its parent.
+			viewController.willMove(toParent: nil)
+			viewController.removeFromParent()
+		}
 	}
 
 	private func updateConstraints() {

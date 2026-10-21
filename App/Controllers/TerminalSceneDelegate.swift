@@ -34,9 +34,15 @@ class TerminalSceneDelegate: UIResponder, UIWindowSceneDelegate, IdentifiableSce
 			return
 		}
 
+		// A link that launched the app, or that this window was opened for, runs in the first tab.
+		let rootViewController = RootViewController()
+		if let url = Self.sshURL(in: connectionOptions) {
+			rootViewController.initialCommand = Self.sshCommand(for: url)
+		}
+
 		window = UIWindow(windowScene: scene)
 		window!.tintColor = .tint
-		window!.rootViewController = UINavigationController(rootViewController: RootViewController())
+		window!.rootViewController = UINavigationController(rootViewController: rootViewController)
 		window!.makeKeyAndVisible()
 
 		scene.title = .localize("TERMINAL", comment: "Generic title displayed before the terminal sets a proper title.")
@@ -64,21 +70,6 @@ class TerminalSceneDelegate: UIResponder, UIWindowSceneDelegate, IdentifiableSce
 	// MARK: - Window management
 
 	func createWindow(asTab: Bool, openingURL url: URL? = nil) {
-		// Handle SSH URL
-		var sshPayload: String?
-		if let url = url,
-			 let host = url.host,
-			 url.scheme == "ssh" {
-			sshPayload = host
-			if let user = url.user {
-				sshPayload = "\(user)@\(host)"
-			}
-			let port = url.port ?? 22
-			if port != 22 {
-				sshPayload = "\(sshPayload!) -p \(port)"
-			}
-		}
-
 		if UIApplication.shared.supportsMultipleScenes {
 			let options = UIScene.ActivationRequestOptions()
 			#if targetEnvironment(macCatalyst)
@@ -90,14 +81,17 @@ class TerminalSceneDelegate: UIResponder, UIWindowSceneDelegate, IdentifiableSce
 			options.requestingScene = window!.windowScene
 			#endif
 
+			// The new window makes the ssh command from the link itself (see sshURL(in:)).
 			let activity = NSUserActivity(activityType: Self.activityType)
 			activity.userInfo = [:]
-			activity.userInfo!["sshPayload"] = sshPayload
+			if let url = url {
+				activity.userInfo!["sshURL"] = url.absoluteString
+			}
 
 			UIApplication.shared.requestSceneSessionActivation(nil, userActivity: activity, options: options, errorHandler: nil)
 		} else {
-			if let sshPayload = sshPayload {
-				rootViewController.initialCommand = "ssh \(sshPayload)"
+			if let url = url {
+				rootViewController.initialCommand = Self.sshCommand(for: url)
 			}
 			rootViewController.addTerminal()
 		}
@@ -105,6 +99,63 @@ class TerminalSceneDelegate: UIResponder, UIWindowSceneDelegate, IdentifiableSce
 
 	@objc func removeWindow() {
 		UIApplication.shared.requestSceneSessionDestruction(window!.windowScene!.session, options: nil, errorHandler: nil)
+	}
+
+	// MARK: - SSH links
+
+	/// What an ssh:// link’s user and host may contain. They arrive percent-decoded and get typed
+	/// into the shell, so only plain names are accepted, and they’re quoted as well.
+	private static let sshNameCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
+	/// The link a new scene was opened for: one that launched the app, which UIKit gives to
+	/// scene(_:willConnectTo:options:) and not to scene(_:openURLContexts:), or one that
+	/// createWindow(asTab:openingURL:) opened a window for.
+	private static func sshURL(in connectionOptions: UIScene.ConnectionOptions) -> URL? {
+		if let context = connectionOptions.urlContexts.first(where: { context in context.url.scheme == "ssh" }) {
+			return context.url
+		}
+		if let activity = connectionOptions.userActivities.first(where: { activity in activity.activityType == Self.activityType }),
+			 let urlString = activity.userInfo?["sshURL"] as? String {
+			return URL(string: urlString)
+		}
+		return nil
+	}
+
+	/// The command to type for an ssh:// link, or nil if it has no host, or a user or host that isn’t
+	/// a plain name.
+	private static func sshCommand(for url: URL) -> String? {
+		guard url.scheme == "ssh",
+					let host = url.host,
+					isPlainSSHName(host, allowingColons: true) else {
+			return nil
+		}
+
+		var command = "ssh"
+		if let user = url.user, !user.isEmpty {
+			guard isPlainSSHName(user, allowingColons: false) else {
+				return nil
+			}
+			command += " -l \(shellQuoted(user))"
+		}
+		if let port = url.port, port != 22 {
+			guard (1...65535).contains(port) else {
+				return nil
+			}
+			command += " -p \(port)"
+		}
+		return "\(command) \(shellQuoted(host))"
+	}
+
+	private static func isPlainSSHName(_ name: String, allowingColons: Bool) -> Bool {
+		// A leading - would be read as an option. Colons are for IPv6 addresses.
+		let characters = allowingColons ? sshNameCharacters.union(CharacterSet(charactersIn: ":")) : sshNameCharacters
+		return !name.isEmpty
+			&& !name.hasPrefix("-")
+			&& name.unicodeScalars.allSatisfy { character in characters.contains(character) }
+	}
+
+	private static func shellQuoted(_ string: String) -> String {
+		"'\(string.replacingOccurrences(of: "'", with: #"'\''"#))'"
 	}
 
 	// MARK: - Preferences

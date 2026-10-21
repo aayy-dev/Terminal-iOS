@@ -31,6 +31,8 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 	private var keyInput = TerminalKeyInput(frame: .zero)
 	private var textView: TerminalHostingView!
 	private var textViewTapGestureRecognizer: UITapGestureRecognizer!
+	private var contentOffsetObservation: NSKeyValueObservation?
+	private weak var observedScrollView: UIScrollView?
 
 	private var state = TerminalState()
 
@@ -90,14 +92,17 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 				.environmentObject(self.hudState)
 		))
 		hudView.translatesAutoresizingMaskIntoConstraints = false
-		hudView.shouldResizeToFitContent = true
-		hudView.setContentHuggingPriority(.fittingSizeLevel, for: .horizontal)
-		hudView.setContentHuggingPriority(.fittingSizeLevel, for: .vertical)
+		// The HUD is a fixed 54 pt square. Sized to fit its content, it could measure 54 and 54.33 pt
+		// on alternate layout passes when the keyboard's height had float noise, which never settled
+		// and hung launch.
+		hudView.shouldResizeToFitContent = false
 		view.addSubview(hudView)
 
 		NSLayoutConstraint.activate([
 			hudView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-			hudView.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor)
+			hudView.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
+			hudView.widthAnchor.constraint(equalToConstant: 54),
+			hudView.heightAnchor.constraint(equalToConstant: 54)
 		])
 
 		addKeyCommand(UIKeyCommand(title: .localize("CLEAR_TERMINAL", comment: "VoiceOver label for a button that clears the terminal."),
@@ -218,6 +223,8 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 
 	@objc func clearTerminal() {
 		terminalController.clearTerminal()
+		// Everything left fits on screen, so new output should follow.
+		state.isFollowingOutput = true
 	}
 
 	private func updateIsSplitViewResizing() {
@@ -241,6 +248,47 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 		}
 	}
 
+	// MARK: - Following output
+
+	/// Watches the terminal's scroll view, which SwiftUI makes, once it's there.
+	private func observeScrolling() {
+		guard let scrollView = textView.firstSubview(ofType: UIScrollView.self),
+					scrollView !== observedScrollView else {
+			return
+		}
+		observedScrollView = scrollView
+		contentOffsetObservation = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
+			self?.contentOffsetDidChange(scrollView)
+		}
+	}
+
+	/// New output scrolls the terminal to the bottom only while it's there (hbang/NewTerm#80). Only
+	/// the user's own scrolling decides that: layout, such as the keyboard showing, moves it too.
+	private func contentOffsetDidChange(_ scrollView: UIScrollView) {
+		guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else {
+			return
+		}
+		// Within a row of the bottom still counts, so a bounce or part of a row doesn't stop it.
+		let rowHeight = terminalController.fontMetrics.boundingBox.height
+		state.isFollowingOutput = scrollView.contentOffset.y >= bottomContentOffset(of: scrollView) - rowHeight
+	}
+
+	private func bottomContentOffset(of scrollView: UIScrollView) -> CGFloat {
+		max(scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height,
+				-scrollView.adjustedContentInset.top)
+	}
+
+	/// Typing or pasting goes back to the bottom, as in other terminals. This checks where the view
+	/// is, not just the flag, as moves the user didn't make (a selection keeping its text in view,
+	/// say) don't update it.
+	private func followOutput() {
+		state.isFollowingOutput = true
+		if let scrollView = textView.firstSubview(ofType: UIScrollView.self),
+			 scrollView.contentOffset.y < bottomContentOffset(of: scrollView) - 1 {
+			scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: bottomContentOffset(of: scrollView)), animated: false)
+		}
+	}
+
 	// MARK: - Lifecycle
 
 	@objc private func sceneDidEnterBackground(_ notification: Notification) {
@@ -258,14 +306,34 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 	@objc private func preferencesUpdated() {
 		state.fontMetrics = terminalController.fontMetrics
 		state.colorMap = terminalController.colorMap
+
+		// A new font size fits a different number of rows and columns.
+		if textView != nil {
+			updateScreenSize()
+		}
 	}
 
 }
 
 extension TerminalSessionViewController: TerminalControllerDelegate {
 
-	func refresh(lines: inout [AnyView]) {
+	func refresh(lines: [AnyView], droppedRows: Int) {
+		if droppedRows > 0 {
+			// Every row moved up. Unless following the output, keep the same text in view.
+			if !state.isFollowingOutput,
+				 let scrollView = textView.firstSubview(ofType: UIScrollView.self),
+				 !scrollView.isTracking {
+				let rowHeight = terminalController.fontMetrics.boundingBox.height
+				scrollView.contentOffset.y = max(scrollView.contentOffset.y - CGFloat(droppedRows) * rowHeight,
+																				 -scrollView.adjustedContentInset.top)
+			}
+		}
 		state.lines = lines
+		observeScrolling()
+	}
+
+	func didReceiveKeyboardInput() {
+		followOutput()
 	}
 
 	func activateBell() {
@@ -364,4 +432,19 @@ extension TerminalSessionViewController: UIDocumentPickerDelegate {
 		}
 	}
 
+}
+
+fileprivate extension UIView {
+	/// The first view of a type in this view's subtree, breadth first.
+	func firstSubview<T: UIView>(ofType type: T.Type) -> T? {
+		var queue = subviews
+		while !queue.isEmpty {
+			let view = queue.removeFirst()
+			if let match = view as? T {
+				return match
+			}
+			queue += view.subviews
+		}
+		return nil
+	}
 }

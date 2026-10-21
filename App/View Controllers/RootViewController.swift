@@ -156,22 +156,20 @@ class RootViewController: UIViewController {
 		}
 		splitViewController.didMove(toParent: self)
 
-		if index == terminals.count {
-			splitViewController.viewControllers = [newTerminal]
-			terminals.append(splitViewController)
-			tabToolbar?.didAddTab(at: index)
-		} else {
-			if let axis = axis {
-				let firstViewController = terminals[index]
-				let secondViewController = newTerminal
-				splitViewController.axis = axis
-				splitViewController.viewControllers = [firstViewController, secondViewController]
-			} else {
-				splitViewController.viewControllers = [newTerminal]
-			}
+		if let axis = axis, index < terminals.count {
+			// A split takes the place of the tab it splits.
+			let firstViewController = terminals[index]
+			let secondViewController = newTerminal
+			splitViewController.axis = axis
+			splitViewController.viewControllers = [firstViewController, secondViewController]
 
 			terminals[index] = splitViewController
 			tabToolbar?.tabDidUpdate(at: index)
+		} else {
+			// A new tab goes in next to the selected one, moving the tabs after it along.
+			splitViewController.viewControllers = [newTerminal]
+			terminals.insert(splitViewController, at: index)
+			tabToolbar?.didAddTab(at: index)
 		}
 	}
 
@@ -184,19 +182,28 @@ class RootViewController: UIViewController {
 		viewController.removeFromParent()
 		viewController.view.removeFromSuperview()
 
+		// Closing a tab ends its sessions, which removing its split doesn’t do. This comes after its
+		// views leave the window, because a terminal that disappears restarts its updates.
+		(viewController as? TerminalSplitViewController)?.endSessions()
+
 		terminals.remove(at: index)
 		tabToolbar?.didRemoveTab(at: index)
 
-		// If this was the last tab, close the window (or make a new tab if not supported). Otherwise
-		// select the closest tab we have available.
+		// If this was the last tab, close the window (or make a new tab if not supported). If it was
+		// the selected tab, select the closest tab we have available. Otherwise the selected tab stays
+		// on screen, though it moves left if the closed tab was before it.
 		if terminals.count == 0 {
 			if UIApplication.shared.supportsMultipleScenes {
 				closeCurrentWindow()
 			} else {
 				addTerminal()
 			}
-		} else {
-			selectTerminal(at: index >= terminals.count ? index - 1 : index)
+		} else if index == selectedTabIndex {
+			// The tab on screen is the one that was closed, so there’s nothing to hide.
+			selectTerminal(at: index >= terminals.count ? index - 1 : index, previousViewController: nil)
+		} else if index < selectedTabIndex {
+			selectedTabIndex -= 1
+			tabToolbar?.didSelectTab(at: selectedTabIndex)
 		}
 	}
 
@@ -212,6 +219,7 @@ class RootViewController: UIViewController {
 		for terminalViewController in terminals {
 			terminalViewController.removeFromParent()
 			terminalViewController.view.removeFromSuperview()
+			(terminalViewController as? TerminalSplitViewController)?.endSessions()
 		}
 
 		terminals.removeAll()
@@ -224,6 +232,10 @@ class RootViewController: UIViewController {
 		// If the previous index is now out of bounds, just use nil as our previous. The tab and view
 		// controller were removed so we don’t need to do anything
 		let previousViewController = oldSelectedTabIndex == nil ? nil : terminals[oldSelectedTabIndex!]
+		selectTerminal(at: index, previousViewController: previousViewController)
+	}
+
+	private func selectTerminal(at index: Int, previousViewController: BaseTerminalSplitViewControllerChild?) {
 		let newViewController = terminals[index]
 
 		selectedTabIndex = index
@@ -317,6 +329,10 @@ class RootViewController: UIViewController {
 
 	private func destructScene() {
 		if UIApplication.shared.supportsMultipleScenes {
+			// Closing the window ends its sessions, as closing a tab does.
+			for terminalViewController in terminals {
+				(terminalViewController as? TerminalSplitViewController)?.endSessions()
+			}
 			// TODO: Probably need to directly use NSWindow APIs for this on Catalyst.
 			// https://developer.apple.com/forums/thread/127382
 			UIApplication.shared.requestSceneSessionDestruction(view.window!.windowScene!.session, options: nil, errorHandler: nil)

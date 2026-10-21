@@ -49,8 +49,8 @@ public class Preferences: NSObject, ObservableObject {
 			lastVersion = Int(version) ?? 0
 		}
 
-		fontMetricsChanged()
-		colorMapChanged()
+		fontMetricsChanged(notify: false)
+		colorMapChanged(notify: false)
 	}
 
 	@AppStorage("fontName")
@@ -175,16 +175,25 @@ public class Preferences: NSObject, ObservableObject {
 
 	// MARK: - Handlers
 
-	private func fontMetricsChanged() {
+	// Open terminals, and the windows and tabs around them, restyle when they get
+	// didChangeNotification. Not while loading, as handlers read Preferences.shared.
+
+	private func fontMetricsChanged(notify: Bool = true) {
 		let font = AppFont.predefined[fontName] ?? AppFont()
 		objectWillChange.send()
 		fontMetrics = FontMetrics(font: font, fontSize: CGFloat(fontSize))
+		if notify {
+			NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+		}
 	}
 
-	private func colorMapChanged() {
+	private func colorMapChanged(notify: Bool = true) {
 		let theme = AppTheme.predefined[themeName] ?? AppTheme()
 		objectWillChange.send()
 		colorMap = ColorMap(theme: theme)
+		if notify {
+			NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+		}
 	}
 
 }

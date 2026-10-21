@@ -26,17 +26,22 @@ struct SettingsAdvancedView: View {
 		return LocaleItem(locale: mainLocale, name: name)
 	}
 
-	private let locales: [LocaleItem] = {
+	// Static because SettingsView makes this view on every update, and loading each locale isn’t free.
+	private static let locales: [LocaleItem] = {
 		let mainLocale = Locale.autoupdatingCurrent
-		let items = try! FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: "/usr/share/locale"),
-																														 includingPropertiesForKeys: [],
-																														 options: .skipsSubdirectoryDescendants)
+		let items = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: "/usr/share/locale"),
+																															includingPropertiesForKeys: [],
+																															options: .skipsSubdirectoryDescendants)) ?? []
 		return items
 			.compactMap { item in
+				// Only list locales libc can load. Terminal won’t pass on one that doesn’t, as bash would
+				// crash on it.
 				guard let code = item.pathComponents.last,
-							code.hasSuffix(".UTF-8") else {
+							code.hasSuffix(".UTF-8"),
+							let cLocale = newlocale(LC_CTYPE_MASK, code, nil) else {
 								return nil
 							}
+				freelocale(cLocale)
 				let locale = Locale(identifier: code)
 				return LocaleItem(locale: locale,
 													name: mainLocale.localizedString(forIdentifier: locale.identifier) ?? locale.identifier)
@@ -48,12 +53,12 @@ struct SettingsAdvancedView: View {
 
 	var body: some View {
 		let systemLocale = self.systemLocale
-		let list = ForEach(locales) { item in
+		let list = ForEach(Self.locales) { item in
 			Text(item.name)
 		}
 		let localeName = preferences.preferredLocale == systemLocale.id
 			? Text("System Language")
-			: Text(locales.first(where: { $0.id == preferences.preferredLocale })?.name ?? "")
+			: Text(Self.locales.first(where: { $0.id == preferences.preferredLocale })?.name ?? "")
 
 		return PreferencesList {
 			#if !targetEnvironment(macCatalyst)

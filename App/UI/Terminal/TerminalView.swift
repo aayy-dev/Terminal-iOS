@@ -15,6 +15,9 @@ class TerminalState: ObservableObject {
 	@Published var fontMetrics = FontMetrics(font: AppFont(), fontSize: 12)
 	@Published var colorMap = ColorMap(theme: AppTheme())
 	@Published var isSplitViewResizing = false
+	/// Whether new output scrolls the terminal to the bottom: it does while the user hasn't
+	/// scrolled up from there. Read when output arrives, so changing it needn't redraw anything.
+	var isFollowingOutput = true
 }
 
 struct TerminalView: View {
@@ -39,7 +42,9 @@ struct TerminalView: View {
 			}
 				.background(Color(state.colorMap.background))
 				.onChange(of: state.lines.indices.last, perform: { _ in
-					scrollView.scrollTo(state.lines.indices.last, anchor: .bottom)
+					if state.isFollowingOutput {
+						scrollView.scrollTo(state.lines.indices.last, anchor: .bottom)
+					}
 				})
 		}
 			.opacity(state.isSplitViewResizing ? 0.6 : 1)
@@ -75,54 +80,70 @@ struct TerminalSampleView: View {
 		func send(source: Terminal, data: ArraySlice<UInt8>) {}
 	}
 
-	@State var fontMetrics: FontMetrics
-	@State var colorMap: ColorMap
+	/// The sample terminal. The settings page around it builds a new TerminalSampleView whenever a
+	/// preference changes, so this is kept once for the life of the view.
+	private class Sample: ObservableObject {
+		let state = TerminalState()
+		private let terminal: Terminal
+		private let stringSupplier = StringSupplier()
+		private let delegate = TerminalSampleViewDelegate()
+		private var size = CGSize.zero
 
-	private var terminal: Terminal!
-	private let stringSupplier = StringSupplier()
-	private let delegate = TerminalSampleViewDelegate()
-	private let state = TerminalState()
+		init() {
+			let options = TerminalOptions(cols: 80,
+																		rows: 25,
+																		termName: "xterm-256color",
+																		scrollback: 100)
+			terminal = Terminal(delegate: delegate, options: options)
+			stringSupplier.terminal = terminal
 
-	private let timer = Timer.publish(every: 1, on: .main, in: .common)
-		.autoconnect()
+			if let colorTest = try? Data(contentsOf: Bundle.main.url(forResource: "colortest", withExtension: "txt")!) {
+				terminal.feed(byteArray: [UTF8Char](colorTest))
+			}
+		}
+
+		func update(fontMetrics: FontMetrics, colorMap: ColorMap, size: CGSize? = nil) {
+			if let size = size {
+				self.size = size
+			}
+			stringSupplier.fontMetrics = fontMetrics
+			stringSupplier.colorMap = colorMap
+			// The space around the rows takes its colour from the state.
+			state.fontMetrics = fontMetrics
+			state.colorMap = colorMap
+
+			// Determine the screen size based on the font size
+			// TODO: Calculate the exact number of lines we need from the buffer
+			let glyphWidth = fontMetrics.boundingBox.width
+			if glyphWidth > 0 && self.size.width > 0 {
+				terminal.resize(cols: Int(self.size.width / glyphWidth),
+												rows: 32)
+			}
+
+			state.lines = Array(0...(terminal.rows + terminal.getTopVisibleRow()))
+				.map { stringSupplier.attributedString(forRow: $0) }
+		}
+	}
+
+	let fontMetrics: FontMetrics
+	let colorMap: ColorMap
+
+	@StateObject private var sample = Sample()
 
 	init(fontMetrics: FontMetrics = FontMetrics(font: AppFont(), fontSize: 12),
 			 colorMap: ColorMap = ColorMap(theme: AppTheme())) {
 		self.fontMetrics = fontMetrics
 		self.colorMap = colorMap
-
-		let options = TerminalOptions(cols: 80,
-																	rows: 25,
-																	termName: "xterm-256color",
-																	scrollback: 100)
-		terminal = Terminal(delegate: delegate, options: options)
-		stringSupplier.terminal = terminal
-
-		if let colorTest = try? Data(contentsOf: Bundle.main.url(forResource: "colortest", withExtension: "txt")!) {
-			terminal?.feed(byteArray: [UTF8Char](colorTest))
-		}
 	}
 
 	var body: some View {
 		TerminalView()
-			.environmentObject(state)
-			.onAppear {
-				stringSupplier.colorMap = colorMap
-				stringSupplier.fontMetrics = fontMetrics
-			}
-			.onChange(of: colorMap, perform: { stringSupplier.colorMap = $0 })
-			.onChange(of: fontMetrics, perform: { stringSupplier.fontMetrics = $0 })
-			.onChangeOfFrame(perform: { size in
-				// Determine the screen size based on the font size
-				// TODO: Calculate the exact number of lines we need from the buffer
-				let glyphSize = stringSupplier.fontMetrics?.boundingBox ?? .zero
-				terminal.resize(cols: Int(size.width / glyphSize.width),
-												rows: 32)
+			.environmentObject(sample.state)
+			.onChange(of: colorMap, perform: { sample.update(fontMetrics: fontMetrics, colorMap: $0) })
+			.onChange(of: fontMetrics, perform: { sample.update(fontMetrics: $0, colorMap: colorMap) })
+			.onAppearAndChangeOfFrame(perform: { size in
+				sample.update(fontMetrics: fontMetrics, colorMap: colorMap, size: size)
 			})
-			.onReceive(timer) { _ in
-				state.lines = Array(0...(terminal.rows + terminal.getTopVisibleRow()))
-					.map { stringSupplier.attributedString(forScrollInvariantRow: $0) }
-			}
 	}
 }
 

@@ -24,7 +24,7 @@
 
 	<!-- Alert title displayed when a terminal could not be launched. -->
 	<key>TERMINAL_LAUNCH_FAILED_TITLE</key>
-	<string>無法啟動終端機因為 Shell 處理程序未預期關閉。</</string>
+	<string>無法啟動終端機因為 Shell 處理程序未預期關閉。</string>
 
 	<!-- Alert body displayed when a terminal could not be launched. -->
 	<key>TERMINAL_LAUNCH_FAILED_BODY</key>
@@ -33,7 +33,7 @@
 
 	<!-- Title displayed when the terminal’s process has ended. -->
 	<key>PROCESS_COMPLETED_TITLE</key>
-	<string>會議中止</string>
+	<string>工作階段已結束</string>
 
 	<!-- VoiceOver label for the new tab button. -->
 	<key>NEW_TAB</key>

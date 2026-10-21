@@ -104,39 +104,47 @@ class SubProcess {
 		"LC_TERMINAL=NewTerm"
 	]
 
-	private static var userPasswd: passwd? {
-		let length = sysconf(_SC_GETPW_R_SIZE_MAX)
-		let buffer = malloc(length)
-		defer { buffer?.deallocate() }
+	private static var userPasswd: (homeDirectory: String, shell: String)? {
+		var length = sysconf(_SC_GETPW_R_SIZE_MAX)
+		if length == -1 {
+			length = 4096
+		}
+		let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: length)
+		defer { buffer.deallocate() }
 
+		// The strings in pwd point into buffer, so copy them out before it’s freed.
 		var pwd = passwd()
-		var result: UnsafeMutablePointer<passwd>? = UnsafeMutablePointer<passwd>.allocate(capacity: 1)
-		guard ie_getpwuid_r(getuid(), &pwd, buffer, length, &result) == 0 else {
+		var result: UnsafeMutablePointer<passwd>?
+		guard ie_getpwuid_r(getuid(), &pwd, buffer, length, &result) == 0,
+					result != nil,
+					pwd.pw_dir != nil,
+					pwd.pw_shell != nil else {
 			return nil
 		}
-		return pwd
+		return (homeDirectory: String(cString: pwd.pw_dir), shell: String(cString: pwd.pw_shell))
 	}
 
 	private static var shell: String {
-		if let result = userPasswd?.pw_shell {
-			return String(cString: result)
-		}
-		return "/bin/bash"
+		userPasswd?.shell ?? "/bin/bash"
 	}
 
 	private static var homeDirectory: String {
-		if let result = userPasswd?.pw_dir {
-			return String(cString: result)
-		}
-		return NSHomeDirectory()
+		userPasswd?.homeDirectory ?? NSHomeDirectory()
 	}
 
 	weak var delegate: SubProcessDelegate?
 
 	private var childPID: pid_t?
 	private var fileDescriptor: Int32?
+	/// Guards `childPID` and `fileDescriptor`, and is held for each write and for the close, so a write
+	/// can’t reach the fd number once it’s closed and maybe reused for another file. main, `queue` and
+	/// `writeQueue` all use them, and stop() can run on main and `queue` at once.
+	private let lock = NSLock()
 
 	private let queue = DispatchQueue(label: "ws.hbang.Terminal.io-queue")
+	/// Writes have their own queue: a big paste blocks until the program reads it, and the program
+	/// may first need its output read, which happens on `queue`.
+	private let writeQueue = DispatchQueue(label: "ws.hbang.Terminal.write-queue")
 	private var readSource: DispatchSourceRead?
 	private var signalSource: DispatchSourceProcess?
 
@@ -160,8 +168,9 @@ class SubProcess {
 			logger.error("openpty() failed: \(error, format: .darwinErrno)")
 			throw SubProcessIllegalStateError.openPtyFailed(errno: error)
 		}
-
-		fileDescriptor = fds.primary
+		// Children get only the replica. If a shell kept another tab's primary open, closing that tab
+		// wouldn't hang up its pty.
+		_ = fcntl(fds.primary, F_SETFD, FD_CLOEXEC)
 
 		var actions: posix_spawn_file_actions_t!
 		posix_spawn_file_actions_init(&actions)
@@ -179,9 +188,15 @@ class SubProcess {
 		} else {
 			argv = (Self.loginArgv + [initialDirectory ?? Self.homeDirectory, Self.shell]).cStringArray
 		}
-		let envp = (ProcessInfo.processInfo.environment.map { "\($0)=\($1)" } + Self.baseEnvp + [
-			"LANG=\(localeCode)"
-		]).cStringArray
+		var environment = ProcessInfo.processInfo.environment.map { "\($0)=\($1)" } + Self.baseEnvp
+		if let localeCode = localeCode {
+			environment.append("LANG=\(localeCode)")
+		} else if Self.canLoadLocale("UTF-8") {
+			// iOS has no locale for any language, only the UTF-8 character set, so ask for just that.
+			// Without it programs fall back to ASCII.
+			environment.append("LC_CTYPE=UTF-8")
+		}
+		let envp = environment.cStringArray
 
 		defer {
 			argv.deallocate()
@@ -199,12 +214,30 @@ class SubProcess {
 		}
 
 		logger.debug("Process forked: \(pid)")
+
+		// A write holds the lock, so it must not block: when the program isn’t reading, write(data:)
+		// waits for room without the lock instead.
+		let primary = fds.primary
+		if fcntl(primary, F_SETFL, fcntl(primary, F_GETFL) | O_NONBLOCK) == -1 {
+			let error = errno
+			logger.error("Setting non-blocking mode failed: \(error, format: .darwinErrno)")
+		}
+
+		lock.lock()
 		childPID = pid
+		fileDescriptor = primary
+		lock.unlock()
 
 		// Go ahead and plug a file handle into the child tty.
-		readSource = DispatchSource.makeReadSource(fileDescriptor: fileDescriptor!, queue: queue)
+		readSource = DispatchSource.makeReadSource(fileDescriptor: primary, queue: queue)
 		readSource?.setEventHandler { [weak self] in
 			self?.handleRead()
+		}
+		// Dispatch needs the fd open until the source is cancelled, so it’s closed here.
+		readSource?.setCancelHandler { [lock] in
+			lock.lock()
+			close(primary)
+			lock.unlock()
 		}
 		signalSource = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: queue)
 		signalSource?.setEventHandler { [weak self] in
@@ -217,9 +250,21 @@ class SubProcess {
 	}
 
 	func stop(fromError: Bool = false) throws {
+		// Only one caller gets to tear down, and no write or resize starts on the fd after this.
+		lock.lock()
+		let childPID = self.childPID
+		self.childPID = nil
+		fileDescriptor = nil
+		lock.unlock()
+
 		guard let childPID = childPID else {
 			throw SubProcessIllegalStateError.notStarted
 		}
+
+		// Cancel reads first, as they now find no fd and the source would keep firing. Its cancel
+		// handler closes the fd.
+		readSource?.cancel()
+		readSource = nil
 
 		// If process is still running, send it SIGKILL and wait for termination
 		if kill(childPID, 0) == 0 {
@@ -231,14 +276,6 @@ class SubProcess {
 			logger.debug("Process stopped with exit code: \(WEXITSTATUS(status))")
 		}
 
-		if let fileDescriptor = fileDescriptor {
-			close(fileDescriptor)
-		}
-
-		self.childPID = nil
-		fileDescriptor = nil
-		readSource?.cancel()
-		readSource = nil
 		signalSource?.cancel()
 		signalSource = nil
 
@@ -251,6 +288,10 @@ class SubProcess {
 	}
 
 	private func handleRead() {
+		// The fd stays open while this runs: it’s closed on this queue, once the source is cancelled.
+		lock.lock()
+		let fileDescriptor = self.fileDescriptor
+		lock.unlock()
 		guard let fileDescriptor = fileDescriptor else {
 			return
 		}
@@ -287,18 +328,47 @@ class SubProcess {
 	}
 
 	func write(data: [UTF8Char]) {
-		queue.async {
-			guard let fileDescriptor = self.fileDescriptor else {
-				return
-			}
-			_ = data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
-				Darwin.write(fileDescriptor, buffer.baseAddress!, buffer.count)
+		writeQueue.async {
+			data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+				var offset = 0
+				while offset < buffer.count {
+					// Check the fd and write under the lock, so it can’t be closed in between.
+					self.lock.lock()
+					guard let fileDescriptor = self.fileDescriptor else {
+						self.lock.unlock()
+						return
+					}
+					let written = Darwin.write(fileDescriptor, buffer.baseAddress! + offset, buffer.count - offset)
+					let error = errno
+					self.lock.unlock()
+
+					if written < 0 {
+						switch error {
+						case EINTR:
+							continue
+
+						case EAGAIN:
+							// The program isn’t reading yet. Wait for room, with a timeout because a close
+							// doesn’t wake poll().
+							var pollDescriptor = pollfd(fd: fileDescriptor, events: Int16(POLLOUT), revents: 0)
+							poll(&pollDescriptor, 1, 100)
+							continue
+
+						default:
+							// EIO once the program has gone.
+							return
+						}
+					}
+					offset += written
+				}
 			}
 		}
 	}
 
-	private var localeCode: String {
-		// Try and find a locale suitable for the user. Use en_US.UTF-8 as fallback.
+	private var localeCode: String? {
+		// Try and find a locale suitable for the user. Use en_US.UTF-8 as fallback, or nothing if that
+		// won’t load either (as on iOS): readline (so bash) crashes on a LANG that setlocale() can’t
+		// load.
 		// TODO: There has to be a better way to get a gettext locale out of the Apple locale. For
 		// instance, a phone set to Simplified Chinese but a region of Australia will only have the
 		// language zh_AU… which isn’t a thing. But gettext only has languages in country pairs, no
@@ -315,16 +385,27 @@ class SubProcess {
 			if let languageCode = locale.languageCode,
 				 let regionCode = locale.regionCode {
 				let identifier = "\(languageCode)_\(regionCode).UTF-8"
-				let url = URL(fileURLWithPath: "/usr/share/locale")/identifier
-				if (try? url.checkResourceIsReachable()) == true {
+				if Self.canLoadLocale(identifier) {
 					return identifier
 				}
 			}
 		}
-		return "en_US.UTF-8"
+		return Self.canLoadLocale("en_US.UTF-8") ? "en_US.UTF-8" : nil
+	}
+
+	/// Asks libc itself, which is what the shell will do with LANG. Its folder in /usr/share/locale
+	/// existing isn’t enough.
+	private static func canLoadLocale(_ identifier: String) -> Bool {
+		guard let locale = newlocale(LC_CTYPE_MASK, identifier, nil) else {
+			return false
+		}
+		freelocale(locale)
+		return true
 	}
 
 	private func updateWindowSize() {
+		lock.lock()
+		defer { lock.unlock() }
 		guard let fileDescriptor = fileDescriptor else {
 			return
 		}

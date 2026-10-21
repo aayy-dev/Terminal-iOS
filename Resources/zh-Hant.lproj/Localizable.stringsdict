@@ -32,9 +32,9 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>li</string>
 			<key>one</key>
-			<string>關閉 %li 分頁?</string>
+			<string>關閉 %li 分頁</string>
 			<key>other</key>
-			<string>關閉 %li 分頁?</string>
+			<string>關閉 %li 分頁</string>
 		</dict>
 	</dict>
 </dict>

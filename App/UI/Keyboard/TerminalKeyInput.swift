@@ -64,7 +64,8 @@ class TerminalKeyInput: TextInputBase {
 	private var repeatTimer: Timer?
 
 	private var state = KeyboardToolbarViewState()
-	private var pressedHardwareKeys = Set<UIKey>()
+	/// The hardware key that repeats while it's held: the last one pressed, as on a Mac.
+	private var repeatingHardwareKey: UIKey?
 	private var pressedToolbarKeys = Set<ToolbarKey>()
 
 	override init(frame: CGRect) {
@@ -320,24 +321,26 @@ class TerminalKeyInput: TextInputBase {
 			if let key = press.key,
 				 handleKey(key) {
 				isHandled = true
-				pressedHardwareKeys.insert(key)
+				repeatingHardwareKey = key
 			}
 		}
 
-		if !pressedHardwareKeys.isEmpty {
+		if isHandled {
 			beginKeyRepeat()
-		}
-
-		if !isHandled {
+		} else {
 			super.pressesBegan(presses, with: event)
 		}
 	}
 
 	private func handlePressesEnded(_ presses: Set<UIPress>) {
-		for press in presses {
-			if let key = press.key {
-				pressedHardwareKeys.remove(key)
-			}
+		// Letting go of an earlier key, or of a modifier, doesn't stop the key that's repeating.
+		guard let repeatingKeyCode = repeatingHardwareKey?.keyCode,
+					presses.contains(where: { $0.key?.keyCode == repeatingKeyCode }) else {
+			return
+		}
+		repeatingHardwareKey = nil
+		if pressedToolbarKeys.isEmpty {
+			endKeyRepeat()
 		}
 	}
 
@@ -352,9 +355,9 @@ class TerminalKeyInput: TextInputBase {
 	}
 
 	private func beginKeyRepeat() {
-		if repeatTimer != nil {
-			return
-		}
+		// Each new key waits the whole delay. A timer left from an earlier key would repeat this one
+		// at that key's deadline, so a short press could type twice.
+		endKeyRepeat()
 
 		if KeyboardPreferences.isKeyRepeatEnabled {
 			repeatTimer = Timer.scheduledTimer(timeInterval: KeyboardPreferences.keyRepeatDelay,
@@ -365,8 +368,13 @@ class TerminalKeyInput: TextInputBase {
 		}
 	}
 
+	private func endKeyRepeat() {
+		repeatTimer?.invalidate()
+		repeatTimer = nil
+	}
+
 	@objc private func handleKeyRepeat(_ timer: Timer) {
-		for key in pressedHardwareKeys {
+		if let key = repeatingHardwareKey {
 			handleKey(key)
 		}
 
@@ -374,9 +382,8 @@ class TerminalKeyInput: TextInputBase {
 			keyboardToolbarDidPressKey(key)
 		}
 
-		if pressedHardwareKeys.isEmpty && pressedToolbarKeys.isEmpty {
-			repeatTimer?.invalidate()
-			repeatTimer = nil
+		if repeatingHardwareKey == nil && pressedToolbarKeys.isEmpty {
+			endKeyRepeat()
 			return
 		}
 

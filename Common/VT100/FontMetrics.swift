@@ -25,9 +25,10 @@ public struct FontMetrics: Hashable {
 	public var boundingBox: CGSize { CGSize(width: width, height: height) }
 
 	public static func loadFonts() {
-		// Runtime load all fonts we’re interested in.
+		// Runtime load all fonts we’re interested in, from the app's Fonts folder.
 		// TODO: This should only load the fonts the user wants.
-		guard let listing = try? FileManager.default.contentsOfDirectory(at: Bundle.main.resourceURL!,
+		guard let fontsURL = Bundle.main.resourceURL?.appendingPathComponent("Fonts", isDirectory: true),
+					let listing = try? FileManager.default.contentsOfDirectory(at: fontsURL,
 																																		 includingPropertiesForKeys: nil,
 																																		 options: [.skipsSubdirectoryDescendants, .skipsHiddenFiles]) else {
 			return
@@ -50,7 +51,7 @@ public struct FontMetrics: Hashable {
 		var lightFont: UIFont?
 		var lightItalicFont: UIFont?
 
-		if font.systemMonospaceFont ?? false {
+		if !(font.systemMonospaceFont ?? false) {
 			if let name = font.regular {
 				regularFont = UIFont(name: name, size: fontSize)
 			}
@@ -105,7 +106,7 @@ public struct FontMetrics: Hashable {
 		self.italicFont = italicFont ?? regularFont
 		self.boldItalicFont = boldItalicFont ?? boldFont ?? regularFont
 		self.lightFont = lightFont ?? regularFont
-		self.lightItalicFont = lightFont ?? italicFont ?? regularFont
+		self.lightItalicFont = lightItalicFont ?? italicFont ?? regularFont
 
 		// Determine the bounding box of a single letter in this font. This, of course, assumes all
 		// characters in this font (and its variants) are the same width, but that’s an assumption most

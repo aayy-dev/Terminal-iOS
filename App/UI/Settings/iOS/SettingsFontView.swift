@@ -23,7 +23,9 @@ struct SettingsFontView: View {
 
 			PreferencesList {
 				PreferencesGroup(header: Text("Font")) {
-					PreferencesPicker(selection: preferences.$fontName, label: EmptyView()) {
+					// Bound through the preferences object, not the stored value's own binding, so setting
+					// it runs didSet, which works out the new font metrics.
+					PreferencesPicker(selection: $preferences.fontName, label: EmptyView()) {
 						ForEach(sortedFonts, id: \.key) { key, value in
 							HStack(alignment: .center) {
 								if value.previewFont == nil {
@@ -43,7 +45,7 @@ struct SettingsFontView: View {
 
 #if !targetEnvironment(macCatalyst)
 				PreferencesGroup {
-					Stepper(value: preferences.$fontSizePhone, in: 10...20, step: 1) {
+					Stepper(value: $preferences.fontSizePhone, in: 10...20, step: 1) {
 						Text("Font Size: \(Int(preferences.fontSizePhone))")
 					}
 				}

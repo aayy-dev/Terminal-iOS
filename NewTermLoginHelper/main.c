@@ -34,8 +34,11 @@ int main(int argc, char *argv[]) {
 
 	// Construct command line to exec by replacing argv[2] with shell basename preceded by "-", which
 	// indicates to the shell that it is being launched by login(1).
-	char *program = malloc(strlen(argv[2]));
-	strcpy(program, argv[2]);
+	char *program = strdup(argv[2]);
+	if (!program) {
+		perror("strdup()");
+		return 1;
+	}
 	asprintf(&argv[2], "-%s", basename(program));
 
 	// Now exec the shell, using our supplied command line from argv[2] onwards.

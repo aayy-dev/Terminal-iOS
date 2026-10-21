@@ -21,7 +21,7 @@ class TerminalPasswordInputView: UITextField {
 		isSecureTextEntry = true
 		textContentType = .password
 
-		NotificationCenter.default.addObserver(self, selector: #selector(self.textDidChange(_:)), name: UITextField.textDidChangeNotification, object: nil)
+		NotificationCenter.default.addObserver(self, selector: #selector(self.textDidChange(_:)), name: UITextField.textDidChangeNotification, object: self)
 	}
 
 	required init?(coder: NSCoder) {

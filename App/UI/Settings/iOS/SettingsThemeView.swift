@@ -22,7 +22,9 @@ struct SettingsThemeView: View {
 
 			PreferencesList {
 				PreferencesGroup(header: Text("Built in Themes")) {
-					PreferencesPicker(selection: preferences.$themeName, label: EmptyView()) {
+					// Bound through the preferences object, not the stored value's own binding, so setting
+					// it runs didSet, which works out the new colours.
+					PreferencesPicker(selection: $preferences.themeName, label: EmptyView()) {
 						ForEach(sortedThemes, id: \.key) { item in Text(item.key) }
 					}
 				}

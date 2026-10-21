@@ -12,10 +12,13 @@ import SwiftTerm
 import os.log
 
 public protocol TerminalControllerDelegate: AnyObject {
-	func refresh(lines: inout [AnyView])
+	/// `droppedRows` rows went off the top since the last refresh, as a full scrollback drops its
+	/// oldest lines, so every row still there moved up by that many.
+	func refresh(lines: [AnyView], droppedRows: Int)
 	func activateBell()
 	func titleDidChange(_ title: String?, isDirty: Bool, hasBell: Bool)
 	func currentFileDidChange(_ url: URL?, inWorkingDirectory workingDirectoryURL: URL?)
+	func didReceiveKeyboardInput()
 
 	func saveFile(url: URL)
 	func fileUploadRequested()
@@ -28,20 +31,31 @@ public class TerminalController {
 
 	public weak var delegate: TerminalControllerDelegate?
 
-	public var colorMap: ColorMap {
-		get { stringSupplier.colorMap! }
-		set { stringSupplier.colorMap = newValue }
-	}
-	public var fontMetrics: FontMetrics {
-		get { stringSupplier.fontMetrics! }
-		set { stringSupplier.fontMetrics = newValue }
-	}
+	/// The style the terminal is drawn with. The string supplier, which belongs to the terminal
+	/// queue, gets its own copy there.
+	public private(set) var colorMap = Preferences.shared.colorMap
+	public private(set) var fontMetrics = Preferences.shared.fontMetrics
 
 	internal var terminal: Terminal?
 	private var subProcess: SubProcess?
 	private var subProcessFailureError: Error?
 	private let stringSupplier = StringSupplier()
+
+	// Rows here count from the oldest line the terminal still holds, as getTopVisibleRow() and
+	// getScrollInvariantUpdateRange() do. getScrollInvariantLine(row:) counts from the first line it
+	// ever held instead. Once the scrollback is full, each new line drops the oldest one and adds
+	// one to SwiftTerm's linesTop (not public) rather than moving the screen down, so the two part.
+	// These belong to the terminal queue.
+
+	/// SwiftTerm's linesTop: how many lines the full scrollback has dropped, found each update.
+	internal private(set) var linesTop = 0
 	private var lines = [AnyView]()
+	/// The terminal as `lines` last showed it, to tell how its lines have moved since.
+	private var linesState = LinesState()
+	/// The rows of the screen that isn't showing (normal or alternate), to show again when it's back.
+	private var otherScreenLines: (lines: [AnyView], state: LinesState)?
+	private var screenDidChange = false
+	private var needsFullRedraw = false
 
 	private var processLaunchDate: Date?
 	private var updateTimer: CADisplayLink?
@@ -57,6 +71,9 @@ public class TerminalController {
 	}
 	private var readBuffer = [UTF8Char]()
 
+	/// The size the terminal was last asked to be, as its own size belongs to the terminal queue.
+	private var terminalSize = (cols: 0, rows: 0)
+
 	internal var terminalQueue = DispatchQueue(label: "ws.hbang.Terminal.terminal-queue")
 
 	public var screenSize: ScreenSize? {
@@ -64,7 +81,6 @@ public class TerminalController {
 	}
 	public var scrollbackLines: Int { terminal?.getTopVisibleRow() ?? 0 }
 
-	private var lastCursorLocation: (x: Int, y: Int) = (-1, -1)
 	private var lastBellDate: Date?
 
 	internal var title: String?
@@ -83,7 +99,9 @@ public class TerminalController {
 	public init() {
 		let options = TerminalOptions(termName: "xterm-256color",
 																	scrollback: 10_000)
-		terminal = Terminal(delegate: self, options: options)
+		let terminal = Terminal(delegate: self, options: options)
+		self.terminal = terminal
+		terminalSize = (terminal.cols, terminal.rows)
 
 		stringSupplier.terminal = terminal
 
@@ -105,11 +123,20 @@ public class TerminalController {
 
 	@objc private func preferencesUpdated() {
 		let preferences = Preferences.shared
-		stringSupplier.colorMap = preferences.colorMap
-		stringSupplier.fontMetrics = preferences.fontMetrics
+		let colorMap = preferences.colorMap
+		let fontMetrics = preferences.fontMetrics
+		self.colorMap = colorMap
+		self.fontMetrics = fontMetrics
 
 		powerStateChanged()
-		terminal?.refresh(startRow: 0, endRow: terminal?.rows ?? 0)
+
+		// Redraw every row, not just the screen, or the scrollback keeps the old colours and font.
+		terminalQueue.async {
+			self.stringSupplier.colorMap = colorMap
+			self.stringSupplier.fontMetrics = fontMetrics
+			self.otherScreenLines = nil
+			self.needsFullRedraw = true
+		}
 	}
 
 	@objc private func powerStateChanged() {
@@ -190,8 +217,12 @@ public class TerminalController {
 	}
 
 	public func stopSubProcess() throws {
-		try subProcess!.stop()
-		stopUpdatingTimer()
+		defer { stopUpdatingTimer() }
+		do {
+			try subProcess!.stop()
+		} catch SubProcessIllegalStateError.notStarted {
+			// It already ended, as when the shell exits and its pane closes.
+		}
 	}
 
 	// MARK: - Terminal
@@ -224,57 +255,224 @@ public class TerminalController {
 			guard let terminal = self.terminal else {
 				return
 			}
+			self.updateLines(terminal: terminal)
+		}
+	}
 
-			let scrollbackRows = terminal.getTopVisibleRow()
-			var cursorLocation = terminal.getCursorLocation()
-			cursorLocation.y += scrollbackRows
+	/// Where the rows in `lines` were in the terminal when they were last brought up to date.
+	private struct LinesState {
+		var topVisibleRow = 0
+		var cols = 0
+		var linesTop = 0
+		var cursorLocation: (x: Int, y: Int) = (-1, -1)
+		/// The last line of scrollback, above the screen, and its row. Lines in the scrollback only
+		/// ever move up, when lines are dropped from the top, so finding it again tells how far.
+		var anchor: (row: Int, line: BufferLine)?
+	}
 
-			let updateRange = terminal.getScrollInvariantUpdateRange() ?? (0, 0)
-			if updateRange == (0, 0) && cursorLocation == self.lastCursorLocation {
-				// Nothing changed, nothing to do.
-				return
+	/// The line in `row`, counting rows as the terminal view does. Terminal queue only.
+	internal func line(atRow row: Int) -> BufferLine? {
+		terminal?.getScrollInvariantLine(row: row + linesTop)
+	}
+
+	/// Finds SwiftTerm's linesTop. getScrollInvariantLine(row:) returns nil for the rows it dropped,
+	/// then lines, so it's the first row that has one.
+	private func findLinesTop(near guess: Int, in terminal: Terminal) -> Int {
+		func holds(_ row: Int) -> Bool { terminal.getScrollInvariantLine(row: row) != nil }
+		func isFirst(_ row: Int) -> Bool { holds(row) && (row == 0 || !holds(row - 1)) }
+		if isFirst(guess) {
+			return guess
+		}
+		if isFirst(0) {
+			return 0
+		}
+		// The rows it holds run on unbroken for at least the scrollback plus the screen, so steps
+		// that long can't jump past them. Find one row in the run, then narrow down to the first one
+		// between it and a row known to be before it. Lines are only added between resets to 0, so
+		// look up from the guess.
+		let step = max(terminal.getTopVisibleRow() + terminal.rows, 1)
+		var low = guess
+		var high = guess + step
+		if holds(guess) {
+			low = 0
+			high = guess
+		} else {
+			var steps = 0
+			while !holds(high) {
+				steps += 1
+				if steps > 100_000 {
+					logger.error("Couldn’t find the first line of the scrollback")
+					return guess
+				}
+				low = high
+				high += step
 			}
-			terminal.clearUpdateRange()
-
-			let scrollInvariantRows = scrollbackRows + terminal.rows
-
-			// Remove lines that no longer exist
-			if self.lines.count > scrollInvariantRows {
-				self.lines.removeSubrange((scrollInvariantRows - 1)...)
+		}
+		while high - low > 1 {
+			let middle = (low + high) / 2
+			if holds(middle) {
+				high = middle
+			} else {
+				low = middle
 			}
+		}
+		return high
+	}
 
-			// Add new lines that have been introduced
-			while self.lines.count <= max(updateRange.endY, scrollInvariantRows) {
-				self.lines.append(AnyView(EmptyView()))
+	/// How many rows the lines `state` describes have moved up since, as lines were dropped from the
+	/// top (a full scrollback taking new lines, or a resize trimming it). Nil if they aren't there
+	/// any more: cleared, reset, rewrapped to a new width or on the other screen.
+	private func rowsDropped(since state: LinesState, in terminal: Terminal) -> Int? {
+		guard state.cols == terminal.cols,
+					let anchor = state.anchor else {
+			return nil
+		}
+		var row = min(anchor.row, terminal.getTopVisibleRow() + terminal.rows - 1)
+		while row >= 0 && line(atRow: row) !== anchor.line {
+			row -= 1
+		}
+		return row >= 0 ? anchor.row - row : nil
+	}
+
+	/// Brings `lines` up to date with the terminal and hands a copy to the delegate.
+	private func updateLines(terminal: Terminal) {
+		// Coming back from the other screen, its linesTop is the better guess.
+		let guess = screenDidChange ? max(linesTop, otherScreenLines?.state.linesTop ?? 0) : linesTop
+		linesTop = findLinesTop(near: guess, in: terminal)
+
+		let topVisibleRow = terminal.getTopVisibleRow()
+		let rowCount = topVisibleRow + terminal.rows
+		var cursorLocation = terminal.getCursorLocation()
+		cursorLocation.y += topVisibleRow
+		let updateRange = terminal.getScrollInvariantUpdateRange()
+
+		// Work out how the lines moved since the last update.
+		var droppedRows = 0
+		var redrawAll = needsFullRedraw
+		// Rows from here down are redrawn whatever the update range says.
+		var redrawFrom = rowCount
+		if screenDidChange {
+			// Switching to or from the alternate screen redraws the screen, and the update range mixes
+			// rows of both. The normal screen's scrollback comes back as it was.
+			screenDidChange = false
+			if let dropped = rowsDropped(since: linesState, in: terminal) {
+				// Back on the same screen already
+				droppedRows = dropped
+				redrawFrom = linesState.topVisibleRow - dropped
+			} else {
+				let current = (lines: lines, state: linesState)
+				if let other = otherScreenLines,
+					 let dropped = rowsDropped(since: other.state, in: terminal) {
+					lines = other.lines
+					linesState = other.state
+					droppedRows = dropped
+					redrawFrom = other.state.topVisibleRow - dropped
+					otherScreenLines = current
+				} else {
+					redrawAll = true
+					// Rows waiting to be redrawn in a new font or theme aren't worth keeping.
+					if !needsFullRedraw && (current.state.anchor != nil || otherScreenLines == nil) {
+						otherScreenLines = current
+					}
+				}
 			}
+		} else if linesState.anchor != nil {
+			if let dropped = rowsDropped(since: linesState, in: terminal) {
+				droppedRows = dropped
+			} else {
+				redrawAll = true
+			}
+		} else if linesState.cols == terminal.cols && linesTop >= linesState.linesTop {
+			// No scrollback last time, so nothing to find. Any lines dropped since went through it.
+			// (A new width rewraps every row, so that redraws them all.)
+			droppedRows = linesTop - linesState.linesTop
+		} else {
+			redrawAll = true
+		}
 
-			// Update lines that changed
-			var linesToUpdate = updateRange == (0, 0) ? Set() : Set(updateRange.startY...updateRange.endY)
-			if cursorLocation != self.lastCursorLocation {
+		var lastCursorLocation = linesState.cursorLocation
+		lastCursorLocation.y -= droppedRows
+		if !redrawAll && redrawFrom >= rowCount && droppedRows == 0 && updateRange == nil && cursorLocation == lastCursorLocation {
+			// Nothing changed, nothing to do.
+			return
+		}
+		terminal.clearUpdateRange()
+		needsFullRedraw = false
+
+		// Drop the rows that went off the top, then make it one row more than the terminal has, as
+		// it has always been. That extra row below the last line stays blank, whatever was there.
+		lines.removeFirst(min(droppedRows, lines.count))
+		if lines.count > rowCount {
+			lines.removeSubrange(rowCount...)
+		}
+		while lines.count <= rowCount {
+			lines.append(AnyView(EmptyView()))
+		}
+
+		// Update lines that changed
+		var linesToUpdate = Set<Int>()
+		if redrawAll {
+			linesToUpdate = Set(0..<rowCount)
+		} else {
+			if redrawFrom < rowCount {
+				linesToUpdate.formUnion(max(redrawFrom, 0)..<rowCount)
+			} else if let updateRange = updateRange {
+				// A row is marked by where it was when it changed, and moves up with each line dropped
+				// after that, so look as many rows further up as were dropped.
+				linesToUpdate.formUnion(max(updateRange.startY - droppedRows, 0)...max(updateRange.endY, 0))
+			}
+			// The lines added at the bottom as others were dropped from the top
+			linesToUpdate.formUnion(max(rowCount - droppedRows, 0)..<rowCount)
+			if cursorLocation != lastCursorLocation {
 				linesToUpdate.insert(cursorLocation.y)
-				if self.lastCursorLocation.y != -1 && self.lastCursorLocation.y < scrollInvariantRows {
-					linesToUpdate.insert(self.lastCursorLocation.y)
+				if lastCursorLocation.y >= 0 && lastCursorLocation.y < rowCount {
+					linesToUpdate.insert(lastCursorLocation.y)
 				}
 			}
+		}
 
-			for i in linesToUpdate {
-				self.lines[i] = self.stringSupplier.attributedString(forScrollInvariantRow: i)
-			}
+		for i in linesToUpdate where i < rowCount {
+			lines[i] = stringSupplier.attributedString(forRow: i, linesTop: linesTop)
+		}
 
-			self.lastCursorLocation = cursorLocation
+		let anchorRow = topVisibleRow - 1
+		linesState = LinesState(topVisibleRow: topVisibleRow,
+														cols: terminal.cols,
+														linesTop: linesTop,
+														cursorLocation: cursorLocation,
+														anchor: line(atRow: anchorRow).map { (row: anchorRow, line: $0) })
 
-			DispatchQueue.main.async {
-				self.delegate?.refresh(lines: &self.lines)
+		// Hand over a copy: the next update changes `lines` on this queue while main reads it.
+		let snapshot = lines
+		DispatchQueue.main.async { [droppedRows] in
+			self.delegate?.refresh(lines: snapshot, droppedRows: droppedRows)
 
-				if !self.isVisible && !self.isDirty {
-					self.isDirty = true
-				}
+			if !self.isVisible && !self.isDirty {
+				self.isDirty = true
 			}
 		}
 	}
 
 	public func clearTerminal() {
-		terminal?.resetToInitialState()
+		terminalQueue.async {
+			guard let terminal = self.terminal else {
+				return
+			}
+
+			// Resetting also turns off modes the running program turned on, which it still expects,
+			// such as the bracketed paste that keeps pastes from running at a shell prompt.
+			let bracketedPasteMode = terminal.bracketedPasteMode
+			let applicationCursor = terminal.applicationCursor
+			terminal.resetToInitialState()
+			if bracketedPasteMode {
+				terminal.feed(text: "\u{1b}[?2004h")
+			}
+			if applicationCursor {
+				terminal.feed(text: "\u{1b}[?1h")
+			}
+			self.otherScreenLines = nil
+			self.needsFullRedraw = true
+		}
 
 		// To trigger a redraw, update the screen size, then update it back.
 		if let screenSize = screenSize {
@@ -291,10 +489,16 @@ public class TerminalController {
 	private func updateScreenSize() {
 		if let screenSize = screenSize,
 			 let terminal = terminal,
-			 screenSize.cols != terminal.cols || screenSize.rows != terminal.rows {
+			 Int(screenSize.cols) != terminalSize.cols || Int(screenSize.rows) != terminalSize.rows {
+			terminalSize = (Int(screenSize.cols), Int(screenSize.rows))
+
+			// Resize on the terminal queue, which may be feeding or drawing the buffer right now. The
+			// program hears of the new size after that's queued, so its redraw arrives after it too.
+			terminalQueue.async {
+				terminal.resize(cols: Int(screenSize.cols),
+												rows: Int(screenSize.rows))
+			}
 			subProcess?.screenSize = screenSize
-			terminal.resize(cols: Int(screenSize.cols),
-											rows: Int(screenSize.rows))
 
 			if let error = subProcessFailureError {
 				let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -359,6 +563,10 @@ extension TerminalController: TerminalDelegate {
 		}
 	}
 
+	public func bufferActivated(source: Terminal) {
+		screenDidChange = true
+	}
+
 	public func showCursor(source: Terminal) {
 		stringSupplier.cursorVisible = true
 	}
@@ -415,8 +623,13 @@ extension TerminalController: TerminalInputProtocol {
 	public var applicationCursor: Bool { terminal?.applicationCursor ?? false }
 
 	public func receiveKeyboardInput(data: [UTF8Char]) {
+		// Keys that send nothing, such as ctrl or the keyboard key, aren't typing.
+		guard !data.isEmpty else {
+			return
+		}
 		// Forward the data from the keyboard directly to the subprocess
 		subProcess!.write(data: data)
+		delegate?.didReceiveKeyboardInput()
 	}
 
 }
@@ -448,7 +661,8 @@ extension TerminalController: SubProcessDelegate {
 		// Write the termination message to the terminal.
 		let processCompleted = String.localize("PROCESS_COMPLETED_TITLE", comment: "Title displayed when the terminal’s process has ended.")
 		let cols = Int(subProcess?.screenSize.cols ?? 0)
-		let messageLength = processCompleted.count + 2
+		// Counted in columns: a Chinese title takes two per character.
+		let messageLength = processCompleted.unicodeScalars.reduce(0, { $0 + UnicodeUtil.columnWidth(rune: $1) }) + 2
 		let divider = String(repeating: "═", count: max((cols - messageLength) / 2, 0))
 		let message = "\r\n\u{1b}[0;31m\(divider) \u{1b}[1;31m\(processCompleted)\u{1b}[0;31m \(divider)\u{1b}[m\r\n"
 		readInputStream(message.data(using: .utf8)!)

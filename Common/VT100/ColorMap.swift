@@ -52,23 +52,28 @@ public struct ColorMap: Hashable {
 			})
 		}
 
+		// Black is black, and grey sits halfway between the theme's text and background, so it reads
+		// on any theme but never looks like typed text. They used to be the system label color, which
+		// is white in dark mode. White is xterm's on dark themes, so black on white can be read, and
+		// the theme's text color on light ones, where xterm's would vanish.
+		let grey = foreground.blended(with: background)
 		var ansiColors: [AnsiColorCode: UIColor] = [
-			.black:  .label,
+			.black:  .black,
 			.red:    .systemRed,
 			.green:  .systemGreen,
 			.yellow: .systemYellow,
 			.blue:   .systemBlue,
 			.purple: .systemPurple,
 			.cyan:   cyan,
-			.white:  foreground,
-			.brightBlack:  .label,
+			.white:  isDark ? UIColor(white: 0.9, alpha: 1) : foreground,
+			.brightBlack:  grey,
 			.brightRed:    .systemRed,
 			.brightGreen:  .systemGreen,
 			.brightYellow: .systemYellow,
 			.brightBlue:   .systemBlue,
 			.brightPurple: .systemPurple,
 			.brightCyan:   cyan,
-			.brightWhite:  foregroundBold
+			.brightWhite:  isDark ? .white : foregroundBold
 		]
 
 		if let colorTable = theme.colorTable,
@@ -102,7 +107,8 @@ public struct ColorMap: Hashable {
 			return isForeground ? background : foreground
 
 		case .ansi256(let ansi):
-			let index = Int(ansi) + (isBold && ansi < 248 ? 8 : 0)
+			// Bold brightens only the 8 basic colors. A bright or 256-color index is the color asked for.
+			let index = Int(ansi) + (isBold && ansi < 8 ? 8 : 0)
 			if index < 16 {
 				// ANSI color (0-15)
 				return ansiColors[.allCases[index]]!
@@ -148,4 +154,15 @@ public struct ColorMap: Hashable {
 		}
 	}
 
+}
+
+fileprivate extension UIColor {
+	/// Halfway between this color and another.
+	func blended(with other: UIColor) -> UIColor {
+		var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+		var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+		getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+		other.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+		return UIColor(red: (r1 + r2) / 2, green: (g1 + g2) / 2, blue: (b1 + b2) / 2, alpha: (a1 + a2) / 2)
+	}
 }
