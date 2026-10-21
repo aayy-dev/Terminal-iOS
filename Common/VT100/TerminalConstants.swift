@@ -62,6 +62,10 @@ public struct EscapeSequences {
 	public static let fn        = [
 		"OP", "OQ", "OR", "OS", "[15~", "[17~", "[18~", "[19~", "[20~", "[21~", "[23~", "[24~"
 	].map { "\u{1b}\($0)".utf8Array }
+
+	// https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Bracketed-Paste-Mode
+	public static let bracketedPasteStart = "\u{1b}[200~".utf8Array
+	public static let bracketedPasteEnd   = "\u{1b}[201~".utf8Array
 }
 
 public extension UTF8Char {

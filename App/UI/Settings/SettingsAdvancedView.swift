@@ -68,6 +68,13 @@ struct SettingsAdvancedView: View {
 			}
 			#endif
 
+			#if !targetEnvironment(macCatalyst)
+			PreferencesGroup(header: EmptyView(),
+											 footer: Text("A key button in the top bar that types a password saved in AutoFill, for ssh or sudo. ⌘⌥F does the same on a hardware keyboard.")) {
+				Toggle("Show Password Button", isOn: preferences.$showPasswordButton)
+			}
+			#endif
+
 			PreferencesGroup(header: Text("Locale"),
 											 footer: Text("NewTerm will ask terminal programs to use this locale. Not all programs support this. This will not apply to currently open tabs, and may be overridden by shell startup scripts.")) {
 				PreferencesPicker(selection: preferences.$preferredLocale,

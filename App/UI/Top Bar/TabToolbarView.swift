@@ -28,29 +28,15 @@ struct TabToolbarView: View {
 
 	@EnvironmentObject private var state: TabToolbarState
 
-	@Environment(\.horizontalSizeClass)
-	private var horizontalSizeClass
+	@ObservedObject private var preferences = Preferences.shared
 
 	var body: some View {
-		if horizontalSizeClass == .compact {
-			VStack(spacing: 2) {
-				HStack(alignment: .center, spacing: 6) {
-					Color.clear
-						.frame(width: 3 + (Self.height + 6) * 3)
-					titleLabel
-					buttons
-				}
-					.frame(height: Self.height)
-				tabs
-					.frame(height: Self.height)
-			}
-		} else {
-			HStack(alignment: .center, spacing: 6) {
-				tabs
-				buttons
-			}
-				.frame(height: Self.height)
+		// One row everywhere: the tabs, then the buttons. (The selected tab already shows its title.)
+		HStack(alignment: .center, spacing: 6) {
+			tabs
+			buttons
 		}
+			.frame(height: Self.height)
 	}
 
 	private var tabs: some View {
@@ -67,22 +53,15 @@ struct TabToolbarView: View {
 		}
 	}
 
-	private var titleLabel: some View {
-		HStack {
-			Spacer()
-			Text(state.terminals[state.selectedIndex].title)
-				.font(.system(size: 17, weight: .semibold))
-			Spacer()
-		}
-	}
-
 	private var buttons: some View {
 		HStack(spacing: 0) {
-			Button(action: { state.delegate?.openPasswordManager() },
-						 label: { Image(systemName: "key.fill") })
-				.squareFrame(sideLength: Self.height)
-				.padding(.horizontal, 3)
-				.accessibilityLabel("Password Manager")
+			if preferences.showPasswordButton {
+				Button(action: { state.delegate?.openPasswordManager() },
+							 label: { Image(systemName: "key.fill") })
+					.squareFrame(sideLength: Self.height)
+					.padding(.horizontal, 3)
+					.accessibilityLabel("Password Manager")
+			}
 
 			Button(action: { state.delegate?.openSettings() },
 						 label: { Image(systemName: .gear) })

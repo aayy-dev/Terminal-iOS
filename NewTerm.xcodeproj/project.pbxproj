@@ -18,7 +18,9 @@
 		4E18B76A295AE91F00029511 /* KeyboardPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E18B769295AE91F00029511 /* KeyboardPreferences.swift */; };
 		4E21B0BC295545BE00494475 /* HapticController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E21B0BB295545BE00494475 /* HapticController.swift */; };
 		4E21B0BE2958722000494475 /* HUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E21B0BD2958722000494475 /* HUDView.swift */; };
+		29E9B4B355D49E8E28360779 /* TerminalSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85C308711D164CDA61BADEAD /* TerminalSelectionView.swift */; };
 		4E2492D026230E59002C47CB /* TerminalController+ITermExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2492CF26230E59002C47CB /* TerminalController+ITermExtensions.swift */; };
+		D03E4CE911FE163EC17F3451 /* TerminalController+TextSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E85734C24BB6233765AA8994 /* TerminalController+TextSelection.swift */; };
 		4E32378F26FB2D4400AEDA06 /* UIApplication+Additions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E32378E26FB2D4400AEDA06 /* UIApplication+Additions.swift */; };
 		4E32379026FB4B3300AEDA06 /* String+Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E98081926184A2500E41883 /* String+Localization.swift */; };
 		4E3237A426FB530C00AEDA06 /* UIColorAdditions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E3237A326FB530C00AEDA06 /* UIColorAdditions.swift */; };
@@ -157,7 +159,9 @@
 		4E18B769295AE91F00029511 /* KeyboardPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardPreferences.swift; sourceTree = "<group>"; };
 		4E21B0BB295545BE00494475 /* HapticController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticController.swift; sourceTree = "<group>"; };
 		4E21B0BD2958722000494475 /* HUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDView.swift; sourceTree = "<group>"; };
+		85C308711D164CDA61BADEAD /* TerminalSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSelectionView.swift; sourceTree = "<group>"; };
 		4E2492CF26230E59002C47CB /* TerminalController+ITermExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TerminalController+ITermExtensions.swift"; sourceTree = "<group>"; };
+		E85734C24BB6233765AA8994 /* TerminalController+TextSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TerminalController+TextSelection.swift"; sourceTree = "<group>"; };
 		4E32378E26FB2D4400AEDA06 /* UIApplication+Additions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIApplication+Additions.swift"; sourceTree = "<group>"; };
 		4E3237A326FB530C00AEDA06 /* UIColorAdditions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIColorAdditions.swift; sourceTree = "<group>"; };
 		4E3237FA26FC5FC300AEDA06 /* ColorBars.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorBars.swift; sourceTree = "<group>"; };
@@ -365,6 +369,7 @@
 				CFBB96C222B5481B00585BE6 /* SubProcess.swift */,
 				CFBB96C522B5481B00585BE6 /* TerminalController.swift */,
 				4E2492CF26230E59002C47CB /* TerminalController+ITermExtensions.swift */,
+				E85734C24BB6233765AA8994 /* TerminalController+TextSelection.swift */,
 				4E3237FA26FC5FC300AEDA06 /* ColorBars.swift */,
 			);
 			path = Controllers;
@@ -437,6 +442,7 @@
 			children = (
 				4E85FA0027FC32D000092492 /* TerminalView.swift */,
 				4E21B0BD2958722000494475 /* HUDView.swift */,
+				85C308711D164CDA61BADEAD /* TerminalSelectionView.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -744,6 +750,7 @@
 				4EBBCB21288AB710002EAE00 /* UnicodeUtil.swift in Sources */,
 				4E980826261873CE00E41883 /* AppFont.swift in Sources */,
 				4E2492D026230E59002C47CB /* TerminalController+ITermExtensions.swift in Sources */,
+				D03E4CE911FE163EC17F3451 /* TerminalController+TextSelection.swift in Sources */,
 				4E980833261ACA0400E41883 /* AppTheme.swift in Sources */,
 				4E9FB97226172079005AFCC8 /* Color+Additions.swift in Sources */,
 				CF71BCDE22BB73C200AFB1E1 /* Global.swift in Sources */,
@@ -771,6 +778,7 @@
 			files = (
 				4E21B0BE2958722000494475 /* HUDView.swift in Sources */,
 				4EA7D40F26F37D480031F078 /* AboutSceneDelegate.swift in Sources */,
+				29E9B4B355D49E8E28360779 /* TerminalSelectionView.swift in Sources */,
 				4EA7D40D26F366820031F078 /* ActivityView.swift in Sources */,
 				4E57499826FEE90700D94DF5 /* PreferencesGroup.swift in Sources */,
 				CFBB96DA22B5481B00585BE6 /* TerminalSessionViewController.swift in Sources */,

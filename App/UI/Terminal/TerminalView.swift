@@ -15,6 +15,8 @@ class TerminalState: ObservableObject {
 	@Published var fontMetrics = FontMetrics(font: AppFont(), fontSize: 12)
 	@Published var colorMap = ColorMap(theme: AppTheme())
 	@Published var isSplitViewResizing = false
+	/// While text is selected, new output doesn't scroll the terminal to the bottom.
+	@Published var isSelecting = false
 	/// Whether new output scrolls the terminal to the bottom: it does while the user hasn't
 	/// scrolled up from there. Read when output arrives, so changing it needn't redraw anything.
 	var isFollowingOutput = true
@@ -32,6 +34,8 @@ struct TerminalView: View {
 				LazyVStack(alignment: .leading, spacing: 0) {
 					ForEach(Array(zip(state.lines, state.lines.indices)), id: \.1) { line, i in
 						line
+							// Every row exactly one cell tall, so text selection can map points to rows.
+							.frame(height: state.fontMetrics.boundingBox.height, alignment: .leading)
 							.drawingGroup(opaque: true)
 							.id(i)
 					}
@@ -42,7 +46,7 @@ struct TerminalView: View {
 			}
 				.background(Color(state.colorMap.background))
 				.onChange(of: state.lines.indices.last, perform: { _ in
-					if state.isFollowingOutput {
+					if state.isFollowingOutput && !state.isSelecting {
 						scrollView.scrollTo(state.lines.indices.last, anchor: .bottom)
 					}
 				})
@@ -108,7 +112,7 @@ struct TerminalSampleView: View {
 			}
 			stringSupplier.fontMetrics = fontMetrics
 			stringSupplier.colorMap = colorMap
-			// The space around the rows takes its colour from the state.
+			// The rows take their height, and the space around them its colour, from the state.
 			state.fontMetrics = fontMetrics
 			state.colorMap = colorMap
 

@@ -49,6 +49,9 @@ public class TerminalController {
 
 	/// SwiftTerm's linesTop: how many lines the full scrollback has dropped, found each update.
 	internal private(set) var linesTop = 0
+	/// linesTop as of the rows the view last showed, kept on main, as text selection counts rows the
+	/// way the view does. It changes along with them, after the terminal queue's has.
+	internal private(set) var shownLinesTop = 0
 	private var lines = [AnyView]()
 	/// The terminal as `lines` last showed it, to tell how its lines have moved since.
 	private var linesState = LinesState()
@@ -444,7 +447,8 @@ public class TerminalController {
 
 		// Hand over a copy: the next update changes `lines` on this queue while main reads it.
 		let snapshot = lines
-		DispatchQueue.main.async { [droppedRows] in
+		DispatchQueue.main.async { [droppedRows, linesTop] in
+			self.shownLinesTop = linesTop
 			self.delegate?.refresh(lines: snapshot, droppedRows: droppedRows)
 
 			if !self.isVisible && !self.isDirty {
@@ -621,6 +625,8 @@ extension TerminalController: TerminalDelegate {
 extension TerminalController: TerminalInputProtocol {
 
 	public var applicationCursor: Bool { terminal?.applicationCursor ?? false }
+
+	public var bracketedPasteMode: Bool { terminal?.bracketedPasteMode ?? false }
 
 	public func receiveKeyboardInput(data: [UTF8Char]) {
 		// Keys that send nothing, such as ctrl or the keyboard key, aren't typing.

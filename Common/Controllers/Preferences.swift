@@ -126,6 +126,12 @@ public class Preferences: NSObject, ObservableObject {
 		willSet { objectWillChange.send() }
 	}
 
+	/// The top bar's password AutoFill button. Off by default; ⌘⌥F does the same.
+	@AppStorage("showPasswordButton")
+	public var showPasswordButton: Bool = false {
+		willSet { objectWillChange.send() }
+	}
+
 	@AppStorage("bellVibrate")
 	public var bellVibrate: Bool = true {
 		willSet { objectWillChange.send() }

@@ -12,46 +12,37 @@ import SwiftUIX
 fileprivate struct Key {
 	var label: String
 	var glyph: String?
-	var imageName: SFSymbolName?
+	var imageName: String?
 	var preferredStyle: KeyboardButtonStyle?
 	var isToggle = false
 	var halfHeight = false
 	var widthRatio: CGFloat?
 	var keyRepeat: Bool?
+	/// An action rather than a key that types something. On iPhone these are plain icons.
+	var isAction = false
+	/// On iPhone, show the glyph instead of the symbol, where the symbol isn't recognisable alone.
+	var compactText = false
 }
 
 enum Toolbar: CaseIterable {
 	case primary, padPrimaryLeading, padPrimaryTrailing
-	case secondary, fnKeys
 
 	var keys: [ToolbarKey] {
 		switch self {
 		case .primary:
 			return [
-				.control, .escape, .tab, .more,
+				.control, .tab, .escape, .fn,
 				.variableSpace(id: 0),
-				.arrows
+				.arrows,
+				.variableSpace(id: 1),
+				.selectAll, .paste, .keyboard
 			]
 
 		case .padPrimaryLeading:
-			return [.control, .escape, .tab, .more]
+			return [.control, .tab, .escape, .fn, .selectAll, .paste, .keyboard]
 
 		case .padPrimaryTrailing:
 			return [.arrows]
-
-		case .secondary:
-			return [
-				.home, .end,
-				.variableSpace(id: 0),
-				.pageUp, .pageDown,
-				.variableSpace(id: 1),
-				.delete,
-				.variableSpace(id: 2),
-				.fnKeys
-			]
-
-		case .fnKeys:
-			return Array(1...12).map { .fnKey(index: $0) }
 		}
 	}
 }
@@ -62,15 +53,26 @@ enum ToolbarKey: Hashable {
 	case variableSpace(id: Int)
 	case arrows
 	// Primary - leading
-	case control, escape, tab, more
-	// Primary - trailing
+	case control, escape, tab, fn
+	// Primary - arrows
 	case up, down, left, right
-	// Secondary - navigation
+	// Navigation, typed with fn and an arrow key
 	case home, end, pageUp, pageDown
-	// Secondary - extras
-	case delete, fnKeys
-	// Fn keys
+	// Extras
+	case delete, selectAll, paste, keyboard
+	// Fn keys, typed with fn and a number key
 	case fnKey(index: Int)
+
+	/// What an arrow key types while fn is on.
+	var functionKey: ToolbarKey {
+		switch self {
+		case .left:  return .home
+		case .right: return .end
+		case .up:    return .pageUp
+		case .down:  return .pageDown
+		default:     return self
+		}
+	}
 
 	fileprivate var key: Key {
 		switch self {
@@ -81,60 +83,86 @@ enum ToolbarKey: Hashable {
 		// Primary - leading
 		case .control:  return Key(label: .localize("Control"),
 															 glyph: .localize("Ctrl"),
-															 imageName: .control,
+															 imageName: "control",
 															 isToggle: true)
 		case .escape:   return Key(label: .localize("Escape"),
 															 glyph: .localize("Esc"),
-															 imageName: .escape)
+															 imageName: "escape",
+															 compactText: true)
 		case .tab:      return Key(label: .localize("Tab"),
-															 imageName: .arrowRightToLine)
-		case .more:     return Key(label: .localize("More"),
-															 imageName: .ellipsis,
-															 preferredStyle: .icons,
+															 imageName: "arrow.right.to.line.alt")
+		case .fn:       return Key(label: .localize("Function"),
+															 glyph: .localize("Fn"),
+															 imageName: "fn",
 															 isToggle: true)
-		// Primary - trailing
+		// Primary - arrows
 		case .up:       return Key(label: .localize("Up"),
-															 imageName: .arrowUp,
+															 imageName: "arrow.up",
 															 preferredStyle: .icons,
 															 halfHeight: true,
 															 widthRatio: 1)
 		case .down:     return Key(label: .localize("Down"),
-															 imageName: .arrowDown,
+															 imageName: "arrow.down",
 															 preferredStyle: .icons,
 															 halfHeight: true,
 															 widthRatio: 1)
 		case .left:     return Key(label: .localize("Left"),
-															 imageName: .arrowLeft,
+															 imageName: "arrow.left",
 															 preferredStyle: .icons,
 															 halfHeight: true,
 															 widthRatio: 1)
 		case .right:    return Key(label: .localize("Right"),
-															 imageName: .arrowRight,
+															 imageName: "arrow.right",
 															 preferredStyle: .icons,
 															 halfHeight: true,
 															 widthRatio: 1)
-		// Secondary - navigation
+		// Navigation
 		case .home:     return Key(label: .localize("Home"),
-															 widthRatio: 1.25)
+															 imageName: "arrow.left.to.line",
+															 preferredStyle: .icons,
+															 halfHeight: true,
+															 widthRatio: 1)
 		case .end:      return Key(label: .localize("End"),
-															 widthRatio: 1.25)
+															 imageName: "arrow.right.to.line",
+															 preferredStyle: .icons,
+															 halfHeight: true,
+															 widthRatio: 1)
 		case .pageUp:   return Key(label: .localize("Page Up"),
 															 glyph: .localize("PgUp"),
-															 widthRatio: 1.25)
+															 imageName: "arrow.up.to.line",
+															 preferredStyle: .icons,
+															 halfHeight: true,
+															 widthRatio: 1)
 		case .pageDown: return Key(label: .localize("Page Down"),
 															 glyph: .localize("PgDn"),
-															 widthRatio: 1.25)
+															 imageName: "arrow.down.to.line",
+															 preferredStyle: .icons,
+															 halfHeight: true,
+															 widthRatio: 1)
 
-		// Secondary - extras
+		// Extras
 		case .delete:   return Key(label: .localize("Delete Forward"),
 															 glyph: .localize("Del"),
-															 imageName: .deleteRight,
+															 imageName: "delete.right",
 															 preferredStyle: .icons,
 															 widthRatio: 1)
-		case .fnKeys:   return Key(label: .localize("Function Keys"),
-															 glyph: .localize("Fn"),
-															 isToggle: true,
-															 widthRatio: 1)
+		case .selectAll: return Key(label: .localize("Select All"),
+															 glyph: .localize("all"),
+															 imageName: "selection.pin.in.out",
+															 preferredStyle: .icons,
+															 widthRatio: 1,
+															 isAction: true)
+		case .paste:    return Key(label: .localize("Paste"),
+															 imageName: "doc.on.clipboard",
+															 preferredStyle: .icons,
+															 widthRatio: 1,
+															 isAction: true)
+		case .keyboard: return Key(label: .localize("Show or Hide Keyboard"),
+															 glyph: .localize("kb"),
+															 imageName: "keyboard",
+															 preferredStyle: .icons,
+															 widthRatio: 1,
+															 isAction: true)
 
 		// Fn keys
 		case .fnKey(let index):
@@ -155,18 +183,37 @@ class KeyboardToolbarViewState: ObservableObject {
 	@Published var toggledKeys = Set<ToolbarKey>()
 }
 
+/// An SF Symbol, or text on iOS versions that don't have it.
+fileprivate struct KeyIcon: View {
+	let systemName: String?
+	let fallback: String
+
+	var body: some View {
+		if let systemName = systemName,
+			 UIImage(systemName: systemName) != nil {
+			Image(systemName: systemName)
+		} else {
+			Text(fallback.localizedLowercase)
+		}
+	}
+}
+
 struct KeyboardToolbarKeyStack: View {
 	weak var delegate: KeyboardToolbarViewDelegate?
 
 	let toolbar: Toolbar
 	var arrowsStyle: KeyboardArrowsStyle?
+	/// On iPhone, the width of each key. Keys there show only their icon, like iSH's toolbar.
+	var compactKeyWidth: CGFloat?
 
 	@EnvironmentObject var state: KeyboardToolbarViewState
 
 	@ObservedObject private var preferences = Preferences.shared
 
+	private var isCompact: Bool { compactKeyWidth != nil }
+
 	var body: some View {
-		HStack(alignment: .center, spacing: 5) {
+		HStack(alignment: .center, spacing: isCompact ? KeyboardToolbarView.compactSpacing : 5) {
 			ForEach(toolbar.keys, id: \.self) { key in
 				switch key {
 				case .fixedSpace:    EmptyView()
@@ -179,7 +226,9 @@ struct KeyboardToolbarKeyStack: View {
 	}
 
 	@ViewBuilder
-	func button(for key: ToolbarKey, halfHeight: Bool = false) -> some View {
+	func button(for baseKey: ToolbarKey, halfHeight: Bool = false) -> some View {
+		// While fn is on, the arrow keys are Home, End, Page Up and Page Down.
+		let key = state.toggledKeys.contains(.fn) ? baseKey.functionKey : baseKey
 		let button = Button {
 			UIDevice.current.playInputClick()
 
@@ -193,35 +242,14 @@ struct KeyboardToolbarKeyStack: View {
 
 			delegate?.keyboardToolbarDidPressKey(key)
 		} label: {
-			switch key {
-			case .up, .down, .left, .right:
-				Image(systemName: key.key.imageName!)
-					.frame(width: 14, height: 14, alignment: .center)
-					.accessibilityLabel(key.key.label)
-
-			default:
-				VStack(alignment: .trailing, spacing: 2) {
-					HStack(spacing: 0) {
-						if let imageName = key.key.imageName,
-							 key.key.preferredStyle != .text {
-							Image(systemName: imageName)
-								.imageScale(.small)
-								.opacity(0.5)
-								.frame(width: 14, height: 14, alignment: .center)
-								.padding(.trailing, 1)
-								.accessibilityLabel(key.key.label)
-						}
-					}
-					.frame(height: 14)
-
-					Text((key.key.glyph ?? key.key.label).localizedLowercase)
-				}
-			}
+			label(for: key)
 		}
 			.buttonStyle(.keyboardKey(selected: state.toggledKeys.contains(key),
 																hasShadow: true,
 																halfHeight: halfHeight,
-																widthRatio: key.key.widthRatio))
+																widthRatio: key.key.widthRatio,
+																compactWidth: compactKeyWidth,
+																isPlain: isCompact && key.key.isAction))
 
 		if KeyboardPreferences.isKeyRepeatEnabled {
 			button
@@ -236,6 +264,41 @@ struct KeyboardToolbarKeyStack: View {
 				})
 		} else {
 			button
+		}
+	}
+
+	@ViewBuilder
+	private func label(for key: ToolbarKey) -> some View {
+		if isCompact {
+			KeyIcon(systemName: key.key.compactText ? nil : key.key.imageName,
+							fallback: key.key.glyph ?? key.key.label)
+				.accessibilityLabel(key.key.label)
+		} else {
+			switch key {
+			case .up, .down, .left, .right,
+					 .home, .end, .pageUp, .pageDown:
+				KeyIcon(systemName: key.key.imageName, fallback: key.key.glyph ?? key.key.label)
+					.frame(width: 14, height: 14, alignment: .center)
+					.accessibilityLabel(key.key.label)
+
+			default:
+				VStack(alignment: .trailing, spacing: 2) {
+					HStack(spacing: 0) {
+						if let symbol = key.key.imageName,
+							 key.key.preferredStyle != .text {
+							Image(systemName: symbol)
+								.imageScale(.small)
+								.opacity(0.5)
+								.frame(width: 14, height: 14, alignment: .center)
+								.padding(.trailing, 1)
+								.accessibilityLabel(key.key.label)
+						}
+					}
+					.frame(height: 14)
+
+					Text((key.key.glyph ?? key.key.label).localizedLowercase)
+				}
+			}
 		}
 	}
 
@@ -296,54 +359,61 @@ struct KeyboardToolbarKeyStack: View {
 }
 
 struct KeyboardToolbarView: View {
+	// iPhone sizes, from iSH's toolbar: 32 pt keys on a 36 pt bar, with 6 pt padding.
+	static let compactMaxKeyWidth: CGFloat = 32
+	static let compactSpacing: CGFloat = 6
+	static let compactPadding: CGFloat = 6
+	static let compactRowHeight = KeyboardKeyButtonStyle.compactHeight + compactPadding * 2
+
 	weak var delegate: KeyboardToolbarViewDelegate?
 
 	let toolbars: [Toolbar]
 
-	@State private var outerSize = CGSize.zero
-
-	@EnvironmentObject var state: KeyboardToolbarViewState
-
 	@ObservedObject private var preferences = Preferences.shared
 
-	private func isToolbarVisible(_ toolbar: Toolbar) -> Bool {
-		switch toolbar {
-		case .primary, .padPrimaryLeading, .padPrimaryTrailing:
-			return true
-		case .secondary:
-			return state.toggledKeys.contains(.more)
-		case .fnKeys:
-			return state.toggledKeys.contains(.fnKeys)
+	/// The widest keys, up to iSH's size, that still fit the whole toolbar on one row.
+	private func keyWidth(for toolbar: Toolbar, width: CGFloat) -> CGFloat {
+		var keyCount: CGFloat = 0
+		var fixedWidth = Self.compactPadding * 2
+		var itemCount = 0
+		for key in toolbar.keys {
+			switch key {
+			case .fixedSpace:
+				continue
+
+			case .arrows:
+				switch preferences.keyboardArrowsStyle {
+				case .butterfly, .scissor:
+					keyCount += 3
+					fixedWidth += 2 * 2
+				case .classic, .vim, .vimInverted:
+					keyCount += 4
+					fixedWidth += 3 * 5
+				}
+
+			case .variableSpace:
+				break
+
+			default:
+				keyCount += 1
+			}
+			itemCount += 1
 		}
+		fixedWidth += CGFloat(max(itemCount - 1, 0)) * Self.compactSpacing
+
+		return max(20, min(Self.compactMaxKeyWidth, ((width - fixedWidth) / max(keyCount, 1)).rounded(.down)))
 	}
 
-	@ViewBuilder
 	var body: some View {
-		ZStack(alignment: .bottom) {
-			Color.black
-				.frame(height: 0)
-				.onAppearAndChangeOfFrame { outerSize = $0 }
-
+		// KeyboardToolbarInputView sets the height; the rows sit at the top of it.
+		GeometryReader { geometry in
 			VStack(spacing: 0) {
 				ForEach(toolbars, id: \.self) { toolbar in
-					if isToolbarVisible(toolbar) {
-						let view = KeyboardToolbarKeyStack(delegate: delegate,
-																							 toolbar: toolbar)
-							.padding(.horizontal, 4)
-							.padding(.top, 5)
-
-						switch toolbar {
-						case .primary, .padPrimaryLeading, .padPrimaryTrailing, .secondary:
-							view
-								.frame(width: outerSize.width)
-
-						case .fnKeys:
-							CocoaScrollView(.horizontal, showsIndicators: false) {
-								view
-							}
-								.frame(width: outerSize.width)
-						}
-					}
+					KeyboardToolbarKeyStack(delegate: delegate,
+																	toolbar: toolbar,
+																	compactKeyWidth: keyWidth(for: toolbar, width: geometry.size.width))
+						.frame(height: KeyboardKeyButtonStyle.compactHeight)
+						.padding(Self.compactPadding)
 				}
 			}
 		}
@@ -357,15 +427,14 @@ struct KeyboardToolbarView_Previews: PreviewProvider {
 		ForEach(ColorScheme.allCases, id: \.self) { scheme in
 			VStack {
 				Spacer()
-				KeyboardToolbarView(toolbars: [.fnKeys, .secondary, .primary])
+				KeyboardToolbarView(toolbars: [.primary])
 					.environmentObject(state)
-					.padding(.bottom, 4)
 					.background(BlurEffectView(style: .systemChromeMaterial))
 					.preferredColorScheme(scheme)
 					.previewLayout(.sizeThatFits)
 			}
 				.previewDisplayName("\(scheme)")
-				.previewLayout(.fixed(width: 414, height: 100))
+				.previewLayout(.fixed(width: 375, height: 100))
 		}
 
 		VStack() {

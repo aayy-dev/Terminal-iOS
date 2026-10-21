@@ -9,12 +9,68 @@ import SwiftUI
 import SwiftUIX
 
 struct KeyboardKeyButtonStyle: ButtonStyle {
+	/// Key height on iPhone, matching iSH's toolbar.
+	static let compactHeight: CGFloat = 36
+
 	var selected = false
 	var shadow = false
 	var halfHeight = false
 	var widthRatio: CGFloat?
+	/// On iPhone, keys are this wide and `compactHeight` tall, rather than the larger iPad keys.
+	var compactWidth: CGFloat?
+	/// Draws only the icon, without a keycap. Used for the toolbar's actions on iPhone.
+	var isPlain = false
 
+	@ViewBuilder
 	func makeBody(configuration: Configuration) -> some View {
+		if let compactWidth = compactWidth {
+			compactBody(configuration: configuration, width: compactWidth)
+		} else {
+			regularBody(configuration: configuration)
+		}
+	}
+
+	private func backgroundColor(for configuration: Configuration) -> Color {
+		if configuration.isPressed {
+			return Color(.keyBackgroundHighlighted)
+		} else if selected {
+			return Color(.keyBackgroundSelected)
+		} else {
+			return Color(.keyBackgroundNormal)
+		}
+	}
+
+	private func compactBody(configuration: Configuration, width: CGFloat) -> some View {
+		let height = halfHeight ? (Self.compactHeight / 2) - 1 : Self.compactHeight
+		let foregroundColor: UIColor
+		if configuration.isPressed {
+			foregroundColor = .keyForegroundHighlighted
+		} else if selected {
+			foregroundColor = .keyForegroundSelected
+		} else {
+			foregroundColor = .keyForegroundNormal
+		}
+
+		return configuration.label
+			.font(.system(size: halfHeight ? 12 : 16, weight: .regular).monospacedDigit())
+			// Follows the theme, so the plain icons show on a light keyboard too.
+			.foregroundColor(Color(foregroundColor))
+			.opacity(isPlain && configuration.isPressed ? 0.4 : 1)
+			.frame(width: width, height: height)
+			.background(
+				backgroundColor(for: configuration)
+					.cornerRadius(halfHeight ? 4 : 5)
+					.shadow(color: shadow ? .black.opacity(0.8) : .clear,
+									radius: 0,
+									x: 0,
+									y: shadow ? 1 : 0)
+					.opacity(isPlain ? 0 : 1)
+			)
+			.contentShape(Rectangle())
+			.transaction { $0.animation = nil }
+	}
+
+	private func regularBody(configuration: Configuration) -> some View {
 		var height: CGFloat = 45
 		let width = widthRatio == nil ? nil : height * widthRatio! * (isBigDevice ? 1.3 : 1)
 		var fontSize: CGFloat = isBigDevice ? 18 : 15
@@ -23,15 +79,6 @@ struct KeyboardKeyButtonStyle: ButtonStyle {
 			height = (height / 2) - 1
 			fontSize *= 0.9
 			cornerRadius *= 0.75
-		}
-
-		let backgroundColor: Color
-		if configuration.isPressed {
-			backgroundColor = Color(.keyBackgroundHighlighted)
-		} else if selected {
-			backgroundColor = Color(.keyBackgroundSelected)
-		} else {
-			backgroundColor = Color(.keyBackgroundNormal)
 		}
 
 		return HStack(alignment: .center, spacing: 0) {
@@ -44,28 +91,30 @@ struct KeyboardKeyButtonStyle: ButtonStyle {
 			.frame(minWidth: height, maxWidth: width)
 			.frame(height: height)
 			.background(
-				backgroundColor
+				backgroundColor(for: configuration)
 					.cornerRadius(cornerRadius)
 					.shadow(color: shadow ? .black.opacity(0.8) : .clear,
 									radius: 0,
 									x: 0,
 									y: shadow ? 1 : 0)
 			)
-			.animation(nil)
+			.transaction { $0.animation = nil }
 	}
 
-	init(selected: Bool = false, hasShadow shadow: Bool = false, halfHeight: Bool = false, widthRatio: CGFloat? = nil) {
+	init(selected: Bool = false, hasShadow shadow: Bool = false, halfHeight: Bool = false, widthRatio: CGFloat? = nil, compactWidth: CGFloat? = nil, isPlain: Bool = false) {
 		self.selected = selected
 		self.shadow = shadow
 		self.halfHeight = halfHeight
 		self.widthRatio = widthRatio
+		self.compactWidth = compactWidth
+		self.isPlain = isPlain
 	}
 }
 
 extension ButtonStyle where Self == KeyboardKeyButtonStyle {
 	/// A button style that mimicks the keys of the software keyboard.
-	static func keyboardKey(selected: Bool = false, hasShadow shadow: Bool = false, halfHeight: Bool = false, widthRatio: CGFloat? = nil) -> KeyboardKeyButtonStyle {
-		KeyboardKeyButtonStyle(selected: selected, hasShadow: shadow, halfHeight: halfHeight, widthRatio: widthRatio)
+	static func keyboardKey(selected: Bool = false, hasShadow shadow: Bool = false, halfHeight: Bool = false, widthRatio: CGFloat? = nil, compactWidth: CGFloat? = nil, isPlain: Bool = false) -> KeyboardKeyButtonStyle {
+		KeyboardKeyButtonStyle(selected: selected, hasShadow: shadow, halfHeight: halfHeight, widthRatio: widthRatio, compactWidth: compactWidth, isPlain: isPlain)
 	}
 }
 
@@ -99,4 +148,3 @@ struct KeyboardKeyButtonStyleContainer_Previews: PreviewProvider {
 		}
 	}
 }
-

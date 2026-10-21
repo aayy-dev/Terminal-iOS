@@ -31,6 +31,9 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 	private var keyInput = TerminalKeyInput(frame: .zero)
 	private var textView: TerminalHostingView!
 	private var textViewTapGestureRecognizer: UITapGestureRecognizer!
+	private var keyboardToggleGestureRecognizer: UITapGestureRecognizer!
+	private let selectionView = TerminalSelectionView(frame: .zero)
+	private var contentSizeObservation: NSKeyValueObservation?
 	private var contentOffsetObservation: NSKeyValueObservation?
 	private weak var observedScrollView: UIScrollView?
 
@@ -77,11 +80,36 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 		textViewTapGestureRecognizer.delegate = self
 		textView.addGestureRecognizer(textViewTapGestureRecognizer)
 
+		// A tap shows the keyboard and selecting hides it (see handleTextViewTap(_:)); a two-finger
+		// tap, like the toolbar's kb key, shows or hides it.
+		keyboardToggleGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(self.handleKeyboardToggleTap(_:)))
+		keyboardToggleGestureRecognizer.numberOfTouchesRequired = 2
+		textView.addGestureRecognizer(keyboardToggleGestureRecognizer)
+
 		keyInput.frame = view.bounds
 		keyInput.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 		keyInput.textView = textView
 		keyInput.terminalInputDelegate = terminalController
+		keyInput.selectAllHandler = { [weak self] in self?.selectAllText() }
+		keyInput.confirmPasteHandler = { [weak self] lineCount, paste in
+			self?.confirmPaste(lineCount: lineCount, paste: paste)
+		}
 		view.addSubview(keyInput)
+
+		selectionView.terminalController = terminalController
+		// While selecting, the selection view shows the same toolbar with the keyboard hidden, so the
+		// toolbar doesn't move when focus goes back and forth.
+		selectionView.sharedInputView = keyInput.emptyInputView
+		selectionView.sharedInputAccessoryView = keyInput.inputAccessoryView
+		selectionView.selectionActiveDidChange = { [weak self] isActive in
+			self?.selectionActiveDidChange(isActive)
+		}
+		selectionView.pasteHandler = { [weak self] in
+			guard let self = self else { return }
+			// Pasting is going back to typing, so the keyboard comes back, as it does for a tap.
+			self.keyInput.showSoftwareKeyboard()
+			self.keyInput.paste(nil)
+		}
 	}
 
 	override func viewDidLoad() {
@@ -109,6 +137,12 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 															 image: UIImage(systemName: "text.badge.xmark"),
 															 action: #selector(self.clearTerminal),
 															 input: "k",
+															 modifierFlags: .command))
+
+		addKeyCommand(UIKeyCommand(title: .localize("Select All"),
+															 image: UIImage(systemName: "selection.pin.in.out"),
+															 action: #selector(self.selectAllText),
+															 input: "a",
 															 modifierFlags: .command))
 
 		#if !targetEnvironment(macCatalyst)
@@ -166,6 +200,11 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 	override func viewWillLayoutSubviews() {
 		super.viewWillLayoutSubviews()
 		updateScreenSize()
+	}
+
+	override func viewDidLayoutSubviews() {
+		super.viewDidLayoutSubviews()
+		updateSelectionView()
 	}
 
 	override func viewSafeAreaInsetsDidChange() {
@@ -241,11 +280,77 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 
 	// MARK: - Gestures
 
+	/// About as long as a double tap can take, which is how long a tap waits before showing the
+	/// keyboard in case it's the start of one.
+	private static let doubleTapInterval: TimeInterval = 0.35
+
+	/// The keyboard follows one rule: a tap is for typing, so it shows the keyboard; selecting (long
+	/// press, double or triple tap) hides it, and it stays hidden until the next tap.
 	@objc private func handleTextViewTap(_ gestureRecognizer: UITapGestureRecognizer) {
-		if gestureRecognizer.state == .ended && !keyInput.isFirstResponder {
-			keyInput.becomeFirstResponder()
-			delegate?.terminalDidBecomeActive(viewController: self)
+		guard gestureRecognizer.state == .ended else {
+			return
 		}
+		let location = gestureRecognizer.location(in: selectionView)
+		// A tap on the selection shows its edit menu.
+		if selectionView.hasSelection && selectionView.selectionContains(location) {
+			selectionView.showEditMenu(at: location)
+			return
+		}
+		// Any other tap ends the selection and goes back to typing. The keyboard comes up a moment
+		// later, unless the tap turned into a double tap that selected something.
+		selectionView.clearSelection()
+		delegate?.terminalDidBecomeActive(viewController: self)
+		let selectionChangeCount = selectionView.selectionChangeCount
+		DispatchQueue.main.asyncAfter(deadline: .now() + Self.doubleTapInterval) { [weak self] in
+			guard let self = self,
+						self.selectionView.selectionChangeCount == selectionChangeCount else {
+				return
+			}
+			self.keyInput.showSoftwareKeyboard()
+		}
+	}
+
+	@objc private func handleKeyboardToggleTap(_ gestureRecognizer: UITapGestureRecognizer) {
+		guard gestureRecognizer.state == .ended else {
+			return
+		}
+		selectionView.clearSelection()
+		keyInput.toggleSoftwareKeyboard()
+		delegate?.terminalDidBecomeActive(viewController: self)
+	}
+
+	// MARK: - Text selection
+
+	/// Keeps the selection view inside the terminal's scroll view, covering all of its content, so
+	/// selections scroll with the text. SwiftUI owns that scroll view, so look it up each time.
+	private func updateSelectionView() {
+		guard let scrollView = textView.firstSubview(ofType: UIScrollView.self) else {
+			return
+		}
+		if selectionView.superview !== scrollView {
+			// Scrolling the terminal shouldn't dismiss the keyboard; kb and two-finger tap do that.
+			scrollView.keyboardDismissMode = .none
+			scrollView.addSubview(selectionView)
+			contentSizeObservation = scrollView.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
+				DispatchQueue.main.async { self?.updateSelectionView() }
+			}
+		} else if scrollView.subviews.last !== selectionView {
+			scrollView.bringSubviewToFront(selectionView)
+		}
+		let contentSize = scrollView.contentSize
+		selectionView.frame = CGRect(x: 0, y: 0,
+																 width: max(contentSize.width, scrollView.bounds.width),
+																 height: max(contentSize.height, scrollView.bounds.height))
+		let grid = terminalController.textGridSize
+		selectionView.update(rowCount: grid.rows,
+												 cols: grid.cols,
+												 cellSize: terminalController.fontMetrics.boundingBox,
+												 origin: CGPoint(x: TerminalView.horizontalSpacing, y: TerminalView.verticalSpacing))
+	}
+
+	@objc private func selectAllText() {
+		updateSelectionView()
+		selectionView.selectAll(nil)
 	}
 
 	// MARK: - Following output
@@ -289,6 +394,44 @@ class TerminalSessionViewController: BaseTerminalSplitViewControllerChild {
 		}
 	}
 
+	/// Whether the view is at the bottom now, for after moves the user didn't make.
+	private func updateIsFollowingOutput() {
+		guard let scrollView = textView.firstSubview(ofType: UIScrollView.self) else {
+			return
+		}
+		let rowHeight = terminalController.fontMetrics.boundingBox.height
+		state.isFollowingOutput = scrollView.contentOffset.y >= bottomContentOffset(of: scrollView) - rowHeight
+	}
+
+	// MARK: - Paste
+
+	private func confirmPaste(lineCount: Int, paste: @escaping () -> Void) {
+		let alertController = UIAlertController(title: String(format: .localize("Paste %li Lines?"), lineCount),
+																						message: .localize("Each line will run as soon as it’s pasted, as if you typed it and pressed return."),
+																						preferredStyle: .alert)
+		alertController.addAction(UIAlertAction(title: .cancel, style: .cancel) { [weak self] _ in
+			self?.keyInput.becomeFirstResponder()
+		})
+		alertController.addAction(UIAlertAction(title: .localize("Paste"), style: .default) { [weak self] _ in
+			paste()
+			self?.keyInput.becomeFirstResponder()
+		})
+		present(alertController, animated: true, completion: nil)
+	}
+
+	private func selectionActiveDidChange(_ isActive: Bool) {
+		state.isSelecting = isActive
+		if !isActive {
+			// While selecting, the view moved with the text, so it may no longer be at the bottom.
+			updateIsFollowingOutput()
+		}
+		// Selecting takes focus, which hides the keyboard. When the selection ends, typing focus comes
+		// back with the keyboard still hidden, so it only comes back with a tap.
+		if !isActive && hasAppeared && !keyInput.isFirstResponder && selectionView.isFirstResponder {
+			keyInput.hideSoftwareKeyboard()
+		}
+	}
+
 	// MARK: - Lifecycle
 
 	@objc private func sceneDidEnterBackground(_ notification: Notification) {
@@ -319,8 +462,10 @@ extension TerminalSessionViewController: TerminalControllerDelegate {
 
 	func refresh(lines: [AnyView], droppedRows: Int) {
 		if droppedRows > 0 {
-			// Every row moved up. Unless following the output, keep the same text in view.
-			if !state.isFollowingOutput,
+			// Every row moved up. Keep the selection on its text, and unless following the output,
+			// keep the same text in view.
+			selectionView.moveRows(by: -droppedRows)
+			if !state.isFollowingOutput || state.isSelecting,
 				 let scrollView = textView.firstSubview(ofType: UIScrollView.self),
 				 !scrollView.isTracking {
 				let rowHeight = terminalController.fontMetrics.boundingBox.height
@@ -330,6 +475,7 @@ extension TerminalSessionViewController: TerminalControllerDelegate {
 		}
 		state.lines = lines
 		observeScrolling()
+		updateSelectionView()
 	}
 
 	func didReceiveKeyboardInput() {
@@ -405,6 +551,12 @@ extension TerminalSessionViewController: UIGestureRecognizerDelegate {
 	func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
 		// This allows the tap-to-activate-keyboard gesture to work without conflicting with UIKit’s
 		// internal text view/scroll view gestures… as much as we can avoid conflicting, at least.
+		// The text selection's own gestures (long press, handles, loupe) don't all fail on a plain
+		// tap, so waiting on them would stop a tap from ever bringing the keyboard back. Telling a tap
+		// from a double tap is handleTextViewTap(_:)'s job.
+		if let view = otherGestureRecognizer.view, view.isDescendant(of: selectionView) {
+			return false
+		}
 		return gestureRecognizer == textViewTapGestureRecognizer
 			&& (!(otherGestureRecognizer is UITapGestureRecognizer) || keyInput.isFirstResponder)
 	}
