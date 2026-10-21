@@ -31,7 +31,7 @@ public enum PreferencesSyncService: Int, Identifiable {
 
 public class Preferences: NSObject, ObservableObject {
 
-	public static let didChangeNotification = Notification.Name(rawValue: "NewTermPreferencesDidChangeNotification")
+	public static let didChangeNotification = Notification.Name(rawValue: "TerminalPreferencesDidChangeNotification")
 
 	public static let shared = Preferences()
 

@@ -15,8 +15,8 @@
 
 int main(int argc, char *argv[]) {
 	// Sanity check
-	if (argc < 3 || strcmp(argv[0], "-NewTermLoginHelper") != 0) {
-		fprintf(stderr, "This helper is used by NewTerm to launch a terminal process, and shouldn’t be run directly.\n");
+	if (argc < 3 || strcmp(argv[0], "-TerminalLoginHelper") != 0) {
+		fprintf(stderr, "This helper is used by Terminal to launch a terminal process, and shouldn’t be run directly.\n");
 		return 1;
 	}
 

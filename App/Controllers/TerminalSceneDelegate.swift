@@ -15,7 +15,7 @@ extension NSUserActivity {
 
 class TerminalSceneDelegate: UIResponder, UIWindowSceneDelegate, IdentifiableSceneDelegate {
 
-	static let activityType = "ws.hbang.Terminal.TerminalSceneActivity"
+	static let activityType = "dev.aayy.terminal.TerminalSceneActivity"
 
 	var window: UIWindow?
 

@@ -77,7 +77,7 @@ public class TerminalController {
 	/// The size the terminal was last asked to be, as its own size belongs to the terminal queue.
 	private var terminalSize = (cols: 0, rows: 0)
 
-	internal var terminalQueue = DispatchQueue(label: "ws.hbang.Terminal.terminal-queue")
+	internal var terminalQueue = DispatchQueue(label: "dev.aayy.terminal.terminal-queue")
 
 	public var screenSize: ScreenSize? {
 		didSet { updateScreenSize() }
@@ -97,7 +97,7 @@ public class TerminalController {
 	internal var iTermIntegrationVersion: String?
 	internal var shell: String?
 
-	internal var logger = Logger(subsystem: "ws.hbang.Terminal", category: "TerminalController")
+	internal var logger = Logger(subsystem: "dev.aayy.terminal", category: "TerminalController")
 
 	public init() {
 		let options = TerminalOptions(termName: "xterm-256color",

@@ -36,12 +36,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 		}
 	}
 
-	@objc func openAbout() {
-		if app.supportsMultipleScenes {
-			app.activateScene(userActivity: .aboutScene)
-		}
-	}
-
 	@objc func addWindow() {
 		// No windows exist. Make the first one.
 		if app.supportsMultipleScenes {
@@ -61,8 +55,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 		switch userActivity?.activityType {
 		case SettingsSceneDelegate.activityType:
 			return UISceneConfiguration(name: "Settings", sessionRole: .windowApplication)
-		case AboutSceneDelegate.activityType:
-			return UISceneConfiguration(name: "About", sessionRole: .windowApplication)
 		default:
 			return UISceneConfiguration(name: "Terminal", sessionRole: .windowApplication)
 		}
@@ -87,20 +79,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 			// Remove View menu toolbar items
 			builder.remove(menu: .toolbar)
 
-			// Application menu
-			builder.insertSibling(UIMenu(options: .displayInline,
+			// Application menu: Settings in place of About
+			builder.replace(menu: .about,
+											with: UIMenu(options: .displayInline,
 																	 children: [
 																		UIKeyCommand(title: .localize("SETTINGS", comment: "Title of Settings page."),
 																								 action: #selector(RootViewController.openSettings),
 																								 input: ",",
 																								 modifierFlags: .command)
-																	 ]),
-														afterMenu: .about)
-			builder.replace(menu: .about,
-											with: UIMenu(options: .displayInline,
-																	 children: [
-																		UICommand(title: .localize("ABOUT", comment: "Title of About page."),
-																							action: #selector(self.openAbout))
 																	 ]))
 
 			// File menu

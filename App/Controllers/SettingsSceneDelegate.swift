@@ -14,7 +14,7 @@ extension NSUserActivity {
 
 class SettingsSceneDelegate: UIResponder, UIWindowSceneDelegate, IdentifiableSceneDelegate {
 
-	static let activityType = "ws.hbang.Terminal.SettingsSceneActivity"
+	static let activityType = "dev.aayy.terminal.SettingsSceneActivity"
 
 	var window: UIWindow?
 	private var windowScene: UIWindowScene!

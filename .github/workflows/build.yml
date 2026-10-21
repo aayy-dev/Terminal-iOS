@@ -1,40 +1,86 @@
-name: CI
+name: Build
 
 on:
   push:
-    paths-ignore:
-      - '.gitignore'
-      - '**/.md'
-      - 'assets/**'
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    paths-ignore:
-      - '.gitignore'
-      - '**/*.md'
-      - 'assets/**'
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Pinned so every build uses the same Theos and Xcode as the tested release.
+  THEOS_COMMIT: 67db2ab8d950910161730de77c322658ea3e6b44
+  XCODE_APP: /Applications/Xcode_26.2.app
 
 jobs:
   build:
-    name: Build
-    runs-on: macos-12
+    runs-on: macos-26
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-    - name: Set up Procursus
-      uses: beerpiss/procursus-action@v2
-      with:
-        packages: ldid xz-utils cmark make
-        cache: true
-        cache-path: ~/__cache
-    - name: Set up Theos
-      run: git clone --recursive --depth=1 'https://github.com/theos/theos.git' ~/theos
-    - name: Compile
-      id: package_build
-      run: |
-        gmake package THEOS=~/theos
-        echo "package=$(cat .theos/last_package)" >> $GITHUB_OUTPUT
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: NewTerm3
-        path: '${{ steps.package_build.outputs.package }}'
+      - uses: actions/checkout@v4
+
+      - name: Check version
+        id: version
+        run: |
+          version=$(grep '^Version:' control | cut -d' ' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match Version $version in control"
+            exit 1
+          fi
+
+      - name: Select Xcode
+        run: sudo xcode-select -s "$XCODE_APP"
+
+      - name: Install tools
+        run: brew install ldid make xz
+
+      - name: Install Theos
+        run: |
+          THEOS="$RUNNER_TEMP/theos"
+          git clone --quiet https://github.com/theos/theos.git "$THEOS"
+          git -C "$THEOS" checkout --quiet "$THEOS_COMMIT"
+          git -C "$THEOS" submodule update --init --recursive --quiet
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: gmake package ROOTLESS=1 FINALPACKAGE=1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Terminal-${{ steps.version.outputs.version }}
+          path: packages/*.deb
+          if-no-files-found: error
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          deb=$(ls packages/*.deb)
+          {
+            awk -v v="$VERSION" '$0 == "## " v {on=1; next} /^## /{on=0} on' CHANGELOG.md
+            echo
+            echo "**Install:** add https://dev.rtrdd.fyi to Sileo or Zebra, or install the .deb below."
+            echo "Rootless jailbreak, iOS 15 or later."
+            echo
+            echo "SHA-256: \`$(shasum -a 256 "$deb" | cut -d' ' -f1)\`"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" "$deb" --title "Terminal $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Publish to APT repo
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.IOS_REPO_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::IOS_REPO_TOKEN isn't set, so the APT repo wasn't updated."
+            exit 0
+          fi
+          gh api repos/aayy-dev/aayy-dev.github.io/dispatches \
+            -f event_type=publish-deb \
+            -F "client_payload[repo]=${GITHUB_REPOSITORY}" \
+            -F "client_payload[tag]=${GITHUB_REF_NAME}"

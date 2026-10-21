@@ -43,6 +43,28 @@ struct SettingsView: View {
 
 	@State private var keyboardToolbarState = KeyboardToolbarViewState()
 
+	/// The package's name, version and identifier. The Makefile passes them in from control, so a
+	/// fork only changes them there; builds made outside Theos show the app's own instead.
+	private var packageFooter: some View {
+		let info = Bundle.main.infoDictionary ?? [:]
+		func value(_ key: String) -> String? {
+			guard let value = info[key] as? String, !value.isEmpty else {
+				return nil
+			}
+			return value
+		}
+		let name = value("PackageName") ?? value("CFBundleDisplayName") ?? value("CFBundleName") ?? ""
+		let version = value("CFBundleShortVersionString") ?? ""
+		let identifier = value("PackageIdentifier") ?? Bundle.main.bundleIdentifier ?? ""
+
+		return VStack(spacing: 2) {
+			Text(verbatim: "\(name) \(version)")
+			Text(verbatim: identifier)
+		}
+			.frame(maxWidth: .infinity)
+			.padding(.top, 24)
+	}
+
 	private func dismiss() {
 		if let windowScene = windowScene {
 			UIApplication.shared.requestSceneSessionDestruction(windowScene.session, options: nil, errorHandler: nil)
@@ -100,14 +122,10 @@ struct SettingsView: View {
 				Toggle("Show heads-up display", isOn: preferences.$bellHUD)
 			}
 
-			PreferencesGroup {
+			PreferencesGroup(header: EmptyView(),
+											 footer: packageFooter) {
 				NavigationLink(destination: SettingsAdvancedView(),
 											 label: { Text("Advanced") })
-			}
-
-			PreferencesGroup {
-				NavigationLink(destination: SettingsAboutView(),
-											 label: { Text("About") })
 			}
 		}
 			.listStyle(InsetGroupedListStyle())

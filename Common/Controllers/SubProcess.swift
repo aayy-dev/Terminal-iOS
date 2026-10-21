@@ -54,7 +54,7 @@ protocol SubProcessDelegate: AnyObject {
 
 class SubProcess {
 
-	private static let loginHelper: String = Bundle.main.path(forAuxiliaryExecutable: "NewTermLoginHelper")!
+	private static let loginHelper: String = Bundle.main.path(forAuxiliaryExecutable: "TerminalLoginHelper")!
 
 	private static let loginIsShell: Bool = {
 		#if targetEnvironment(simulator)
@@ -100,8 +100,8 @@ class SubProcess {
 	private static let baseEnvp: [String] = [
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
-		"TERM_PROGRAM=NewTerm",
-		"LC_TERMINAL=NewTerm"
+		"TERM_PROGRAM=Terminal",
+		"LC_TERMINAL=Terminal"
 	]
 
 	private static var userPasswd: (homeDirectory: String, shell: String)? {
@@ -141,14 +141,14 @@ class SubProcess {
 	/// `writeQueue` all use them, and stop() can run on main and `queue` at once.
 	private let lock = NSLock()
 
-	private let queue = DispatchQueue(label: "ws.hbang.Terminal.io-queue")
+	private let queue = DispatchQueue(label: "dev.aayy.terminal.io-queue")
 	/// Writes have their own queue: a big paste blocks until the program reads it, and the program
 	/// may first need its output read, which happens on `queue`.
-	private let writeQueue = DispatchQueue(label: "ws.hbang.Terminal.write-queue")
+	private let writeQueue = DispatchQueue(label: "dev.aayy.terminal.write-queue")
 	private var readSource: DispatchSourceRead?
 	private var signalSource: DispatchSourceProcess?
 
-	private let logger = Logger(subsystem: "ws.hbang.Terminal", category: "SubProcess")
+	private let logger = Logger(subsystem: "dev.aayy.terminal", category: "SubProcess")
 
 	var screenSize = ScreenSize.default {
 		didSet { updateWindowSize() }

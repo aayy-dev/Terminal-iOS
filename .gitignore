@@ -14,3 +14,7 @@ Carthage/
 # Theos
 .theos
 packages/
+
+# Builds
+build/
+*.log
